@@ -1,6 +1,3 @@
-using Mocha;
-using Mocha.Middlewares;
-
 namespace Mocha.Transport.Nats;
 
 /// <summary>

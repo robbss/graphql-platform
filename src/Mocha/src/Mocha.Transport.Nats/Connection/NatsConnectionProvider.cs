@@ -26,7 +26,7 @@ public interface INatsConnectionProvider
 /// <summary>
 /// Default NATS connection provider backed by <see cref="INatsConnection"/> resolved from DI or created via NatsOpts.
 /// </summary>
-public sealed class DefaultNatsConnectionProvider : INatsConnectionProvider
+public sealed class NatsConnectionProvider : INatsConnectionProvider
 {
     private readonly INatsConnection? _connection;
     private readonly NatsOpts? _opts;
@@ -34,7 +34,7 @@ public sealed class DefaultNatsConnectionProvider : INatsConnectionProvider
     public string Host { get; } = "localhost";
     public int Port { get; } = 4222;
 
-    public DefaultNatsConnectionProvider(INatsConnection connection)
+    public NatsConnectionProvider(INatsConnection connection)
     {
         _connection = connection;
         if (!string.IsNullOrEmpty(connection.Opts.Url))
@@ -45,7 +45,7 @@ public sealed class DefaultNatsConnectionProvider : INatsConnectionProvider
         }
     }
 
-    public DefaultNatsConnectionProvider(NatsOpts opts)
+    public NatsConnectionProvider(NatsOpts opts)
     {
         _opts = opts;
         if (!string.IsNullOrEmpty(opts.Url))

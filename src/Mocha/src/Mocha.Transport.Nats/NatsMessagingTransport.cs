@@ -1,9 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Mocha;
-using Mocha.Middlewares;
-using Mocha.Transport;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 
@@ -12,18 +9,11 @@ namespace Mocha.Transport.Nats;
 /// <summary>
 /// NATS (JetStream) implementation of <see cref="MessagingTransport"/>.
 /// </summary>
-public sealed class NatsMessagingTransport : MessagingTransport
+public sealed class NatsMessagingTransport(Action<INatsMessagingTransportDescriptor> configure) : MessagingTransport
 {
-    private readonly Action<INatsMessagingTransportDescriptor> _configure;
     private NatsMessagingTopology _topology = null!;
 
     public const string DefaultSchema = "nats";
-
-    public NatsMessagingTransport(Action<INatsMessagingTransportDescriptor> configure)
-    {
-        _configure = configure;
-        Schema = DefaultSchema;
-    }
 
     public override MessagingTopology Topology => _topology;
 
@@ -33,10 +23,11 @@ public sealed class NatsMessagingTransport : MessagingTransport
 
     protected override void OnAfterInitialized(IMessagingSetupContext context)
     {
+        Schema = DefaultSchema;
         var config = (NatsTransportConfiguration)Configuration;
 
         var provider = config.ConnectionProvider?.Invoke(context.Services)
-            ?? new DefaultNatsConnectionProvider(
+            ?? new NatsConnectionProvider(
                 context.Services.GetService<INatsConnection>()
                 ?? new NatsConnection(NatsOpts.Default));
 
@@ -60,7 +51,7 @@ public sealed class NatsMessagingTransport : MessagingTransport
     {
         var config = (NatsTransportConfiguration)Configuration;
         var provider = config.ConnectionProvider?.Invoke(context.Services)
-            ?? new DefaultNatsConnectionProvider(
+            ?? new NatsConnectionProvider(
                 context.Services.GetService<INatsConnection>()
                 ?? new NatsConnection(NatsOpts.Default));
 
@@ -77,7 +68,7 @@ public sealed class NatsMessagingTransport : MessagingTransport
     protected override MessagingTransportConfiguration CreateConfiguration(IMessagingSetupContext context)
     {
         var descriptor = new NatsMessagingTransportDescriptor(context);
-        _configure(descriptor);
+        configure(descriptor);
         return descriptor.CreateConfiguration();
     }
 

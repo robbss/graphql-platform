@@ -1,5 +1,3 @@
-using Mocha;
-using Mocha.Features;
 using Mocha.Middlewares;
 using Mocha.Transport.Nats.Features;
 
@@ -49,7 +47,7 @@ public sealed class NatsDispatchEndpoint(NatsMessagingTransport transport)
         var targetSubject = feature?.Subject ?? Subject;
 
         var natsHeaders = NatsMessageHeaders.ToNatsHeaders(envelope);
-        byte[] payload = envelope.Body.ToArray();
+        var payload = envelope.Body.ToArray();
 
         await natsTransport.PublishAsync(targetSubject, payload, natsHeaders, context.CancellationToken).ConfigureAwait(false);
     }

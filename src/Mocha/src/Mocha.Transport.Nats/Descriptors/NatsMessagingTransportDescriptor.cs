@@ -32,7 +32,7 @@ public sealed class NatsMessagingTransportDescriptor
 
     public INatsMessagingTransportDescriptor Host(string host, int port = 4222)
     {
-        Configuration.ConnectionProvider = _ => new DefaultNatsConnectionProvider(new NatsOpts { Url = $"nats://{host}:{port}" });
+        Configuration.ConnectionProvider = _ => new NatsConnectionProvider(new NatsOpts { Url = $"nats://{host}:{port}" });
         return this;
     }
 
@@ -92,50 +92,44 @@ public sealed class NatsMessagingTransportDescriptor
     }
 }
 
-public sealed class NatsStreamDescriptor : INatsStreamDescriptor
+public sealed class NatsStreamDescriptor(NatsStreamConfiguration config) : INatsStreamDescriptor
 {
-    private readonly NatsStreamConfiguration _config;
-    public NatsStreamDescriptor(NatsStreamConfiguration config) => _config = config;
-
     public INatsStreamDescriptor Subjects(params string[] subjects)
     {
-        _config.Subjects.AddRange(subjects);
+        config.Subjects.AddRange(subjects);
         return this;
     }
 
     public INatsStreamDescriptor Storage(NATS.Client.JetStream.Models.StreamConfigStorage storage)
     {
-        _config.Storage = storage;
+        config.Storage = storage;
         return this;
     }
 
     public INatsStreamDescriptor Retention(NATS.Client.JetStream.Models.StreamConfigRetention retention)
     {
-        _config.Retention = retention;
+        config.Retention = retention;
         return this;
     }
 }
 
-public sealed class NatsConsumerDescriptor : INatsConsumerDescriptor
+public sealed class NatsConsumerDescriptor(NatsConsumerConfiguration config) : INatsConsumerDescriptor
 {
-    private readonly NatsConsumerConfiguration _config;
-    public NatsConsumerDescriptor(NatsConsumerConfiguration config) => _config = config;
-
     public INatsConsumerDescriptor FilterSubject(string filterSubject)
     {
-        _config.FilterSubject = filterSubject;
+        config.FilterSubject = filterSubject;
         return this;
     }
 
     public INatsConsumerDescriptor AckWait(TimeSpan ackWait)
     {
-        _config.AckWait = ackWait;
+        config.AckWait = ackWait;
         return this;
     }
 
     public INatsConsumerDescriptor MaxDeliver(int maxDeliver)
     {
-        _config.MaxDeliver = maxDeliver;
+        config.MaxDeliver = maxDeliver;
         return this;
     }
 }

@@ -1,7 +1,5 @@
 using Microsoft.Extensions.Logging;
-using Mocha;
 using Mocha.Features;
-using Mocha.Middlewares;
 using Mocha.Transport.Nats.Features;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
@@ -63,8 +61,9 @@ public sealed class NatsReceiveEndpoint(NatsMessagingTransport transport)
         {
             var js = natsTransport.JSContext;
             var consumer = await js.GetConsumerAsync(_streamName, _consumerName, cancellationToken).ConfigureAwait(false);
+            var opts = new NatsJSConsumeOpts { MaxMsgs = _maxPrefetch };
 
-            await foreach (var msg in consumer.ConsumeAsync<byte[]>(cancellationToken: cancellationToken).ConfigureAwait(false))
+            await foreach (var msg in consumer.ConsumeAsync<byte[]>(opts: opts, cancellationToken: cancellationToken).ConfigureAwait(false))
             {
                 if (cancellationToken.IsCancellationRequested)
                 {

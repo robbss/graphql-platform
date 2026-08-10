@@ -1,4 +1,3 @@
-using Mocha;
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
 
@@ -7,21 +6,16 @@ namespace Mocha.Transport.Nats;
 /// <summary>
 /// Manages NATS JetStream topology declaration and provisioning.
 /// </summary>
-public sealed class NatsMessagingTopology : MessagingTopology
+public sealed class NatsMessagingTopology(
+    MessagingTransport transport,
+    Uri rootAddress,
+    bool autoProvision)
+    : MessagingTopology(transport, rootAddress)
 {
     private readonly List<NatsStream> _streams = [];
     private readonly List<NatsConsumer> _consumers = [];
 
-    public NatsMessagingTopology(
-        MessagingTransport transport,
-        Uri rootAddress,
-        bool autoProvision)
-        : base(transport, rootAddress)
-    {
-        AutoProvision = autoProvision;
-    }
-
-    public bool AutoProvision { get; }
+    public bool AutoProvision { get; } = autoProvision;
 
     public IReadOnlyList<NatsStream> Streams => _streams;
     public IReadOnlyList<NatsConsumer> Consumers => _consumers;
