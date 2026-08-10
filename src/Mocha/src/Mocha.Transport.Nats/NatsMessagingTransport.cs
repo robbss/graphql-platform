@@ -26,10 +26,11 @@ public sealed class NatsMessagingTransport(Action<INatsMessagingTransportDescrip
         Schema = DefaultSchema;
         var config = (NatsTransportConfiguration)Configuration;
 
+        var natsConn = context.Services.GetService<INatsConnection>();
         var provider = config.ConnectionProvider?.Invoke(context.Services)
-            ?? new NatsConnectionProvider(
-                context.Services.GetService<INatsConnection>()
-                ?? new NatsConnection(NatsOpts.Default));
+            ?? (natsConn is not null
+                ? new NatsConnectionProvider(natsConn)
+                : new NatsConnectionProvider(NatsOpts.Default));
 
         var rootUri = new Uri($"{Schema}://{provider.Host}:{provider.Port}");
         _topology = new NatsMessagingTopology(this, rootUri, config.AutoProvision ?? true);
@@ -50,10 +51,11 @@ public sealed class NatsMessagingTransport(Action<INatsMessagingTransportDescrip
         CancellationToken cancellationToken)
     {
         var config = (NatsTransportConfiguration)Configuration;
+        var natsConn = context.Services.GetService<INatsConnection>();
         var provider = config.ConnectionProvider?.Invoke(context.Services)
-            ?? new NatsConnectionProvider(
-                context.Services.GetService<INatsConnection>()
-                ?? new NatsConnection(NatsOpts.Default));
+            ?? (natsConn is not null
+                ? new NatsConnectionProvider(natsConn)
+                : new NatsConnectionProvider(NatsOpts.Default));
 
         Connection = await provider.GetConnectionAsync(cancellationToken).ConfigureAwait(false);
         JSContext = new NatsJSContext(Connection);

@@ -34,12 +34,11 @@ public sealed class NatsConnectionProvider : INatsConnectionProvider
     public string Host { get; } = "localhost";
     public int Port { get; } = 4222;
 
-    public NatsConnectionProvider(INatsConnection connection)
+    public NatsConnectionProvider(INatsConnection? connection)
     {
         _connection = connection;
-        if (!string.IsNullOrEmpty(connection.Opts.Url))
+        if (connection?.Opts.Url is { Length: > 0 } url && Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            var uri = new Uri(connection.Opts.Url);
             Host = uri.Host;
             Port = uri.Port > 0 ? uri.Port : 4222;
         }
@@ -48,9 +47,8 @@ public sealed class NatsConnectionProvider : INatsConnectionProvider
     public NatsConnectionProvider(NatsOpts opts)
     {
         _opts = opts;
-        if (!string.IsNullOrEmpty(opts.Url))
+        if (opts.Url is { Length: > 0 } url && Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            var uri = new Uri(opts.Url);
             Host = uri.Host;
             Port = uri.Port > 0 ? uri.Port : 4222;
         }
