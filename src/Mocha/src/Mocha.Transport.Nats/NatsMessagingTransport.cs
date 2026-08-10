@@ -26,11 +26,7 @@ public sealed class NatsMessagingTransport(Action<INatsMessagingTransportDescrip
         Schema = DefaultSchema;
         var config = (NatsTransportConfiguration)Configuration;
 
-        var natsConn = context.Services.GetService<INatsConnection>();
-        var provider = config.ConnectionProvider?.Invoke(context.Services)
-            ?? (natsConn is not null
-                ? new NatsConnectionProvider(natsConn)
-                : new NatsConnectionProvider(NatsOpts.Default));
+        var provider = ResolveConnectionProvider(context.Services, config);
 
         var rootUri = new Uri($"{Schema}://{provider.Host}:{provider.Port}");
         _topology = new NatsMessagingTopology(this, rootUri, config.AutoProvision ?? true);
@@ -51,11 +47,7 @@ public sealed class NatsMessagingTransport(Action<INatsMessagingTransportDescrip
         CancellationToken cancellationToken)
     {
         var config = (NatsTransportConfiguration)Configuration;
-        var natsConn = context.Services.GetService<INatsConnection>();
-        var provider = config.ConnectionProvider?.Invoke(context.Services)
-            ?? (natsConn is not null
-                ? new NatsConnectionProvider(natsConn)
-                : new NatsConnectionProvider(NatsOpts.Default));
+        var provider = ResolveConnectionProvider(context.Services, config);
 
         Connection = await provider.GetConnectionAsync(cancellationToken).ConfigureAwait(false);
         JSContext = new NatsJSContext(Connection);
@@ -65,6 +57,27 @@ public sealed class NatsMessagingTransport(Action<INatsMessagingTransportDescrip
             ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<NatsMessagingTransport>.Instance;
 
         await _topology.AutoProvisionAsync(JSContext, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static INatsConnectionProvider ResolveConnectionProvider(IServiceProvider services, NatsTransportConfiguration config)
+    {
+        if (config.ConnectionProvider is { } customFactory)
+        {
+            return customFactory(services);
+        }
+
+        var appServices = services.GetApplicationServices();
+
+        var natsConn = appServices.GetService<INatsConnection>()
+            ?? appServices.GetKeyedService<INatsConnection>(config.Name ?? NatsTransportConfiguration.DefaultName)
+            ?? appServices.GetKeyedService<INatsConnection>("nats");
+
+        if (natsConn is not null)
+        {
+            return new NatsConnectionProvider(natsConn);
+        }
+
+        return new NatsConnectionProvider(NatsOpts.Default);
     }
 
     protected override MessagingTransportConfiguration CreateConfiguration(IMessagingSetupContext context)
