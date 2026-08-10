@@ -68,10 +68,7 @@ public sealed class NatsMessagingTransport(Action<INatsMessagingTransportDescrip
 
         var appServices = services.GetApplicationServices();
 
-        var natsConn = appServices.GetService<INatsConnection>()
-            ?? appServices.GetKeyedService<INatsConnection>(config.Name ?? NatsTransportConfiguration.DefaultName)
-            ?? appServices.GetKeyedService<INatsConnection>("nats");
-
+        var natsConn = appServices.GetService<INatsConnection>();
         if (natsConn is not null)
         {
             return new NatsConnectionProvider(natsConn);
