@@ -13,8 +13,14 @@ namespace Mocha.Transport.Nats;
 /// </summary>
 public sealed class NatsMessagingTransport : MessagingTransport
 {
+    /// <summary>
+    /// JetStream's <c>err_code</c> for a stream whose subjects overlap an existing stream's.
+    /// </summary>
+    private const int SubjectOverlapErrorCode = 10065;
+
     private readonly Action<INatsMessagingTransportDescriptor> _configure;
     private NatsMessagingTopology _topology = null!;
+    private ILogger _logger = null!;
     private string _serviceName = NatsTransportConfiguration.DefaultName;
 
     /// <summary>
@@ -45,6 +51,8 @@ public sealed class NatsMessagingTransport : MessagingTransport
         var configuration = (NatsTransportConfiguration)Configuration;
         var services = context.Services.GetApplicationServices();
 
+        _logger = services.GetRequiredService<ILogger<NatsMessagingTransport>>();
+
         Connection =
             configuration.ConnectionProvider?.Invoke(context.Services)
             ?? new NatsConnectionProvider(services.GetRequiredService<INatsConnection>());
@@ -58,7 +66,8 @@ public sealed class NatsMessagingTransport : MessagingTransport
 
         SchedulingEnabled = configuration.EnableScheduling;
 
-        WarnOnLossySubscriptionDefaults(services);
+        WarnOnLossySubscriptionDefaults();
+        WarnOnDivergentServiceNames(configuration.ServiceName, context.Host?.ServiceName);
 
         var builder = new UriBuilder
         {
@@ -80,23 +89,35 @@ public sealed class NatsMessagingTransport : MessagingTransport
         }
     }
 
-    private void WarnOnLossySubscriptionDefaults(IServiceProvider services)
+    /// <summary>
+    /// Reports the case where the transport is named one thing and the host another, because the two
+    /// names control different halves of the topology.
+    /// </summary>
+    // The transport name only names the convention stream. Durable consumer names come from the
+    // shared naming conventions, which scope them by the host's service name, and that falls back to
+    // the entry assembly name. Two services that end up with the same host service name therefore
+    // share a durable and silently compete for messages instead of each receiving a copy.
+    private void WarnOnDivergentServiceNames(string? transportServiceName, string? hostServiceName)
+    {
+        if (transportServiceName is null
+            || string.Equals(transportServiceName, hostServiceName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _logger.DivergentServiceNames(transportServiceName, hostServiceName);
+    }
+
+    private void WarnOnLossySubscriptionDefaults()
     {
         if (Connection.Connection.Opts.SubPendingChannelFullMode == BoundedChannelFullMode.Wait)
         {
             return;
         }
 
-        services
-            .GetRequiredService<ILogger<NatsMessagingTransport>>()
-            .LogWarning(
-                "The NATS connection uses SubPendingChannelFullMode '{FullMode}', so a subscriber "
-                + "falling more than {Capacity} messages behind drops messages instead of applying "
-                + "back pressure. JetStream traffic is unaffected because pull consumers are bound "
-                + "by MaxAckPending, but request/reply responses can be lost. Set "
-                + "SubPendingChannelFullMode to Wait on NatsOpts to avoid this.",
-                Connection.Connection.Opts.SubPendingChannelFullMode,
-                Connection.Connection.Opts.SubPendingChannelCapacity);
+        _logger.LossySubscriptionDefaults(
+            Connection.Connection.Opts.SubPendingChannelFullMode.ToString(),
+            Connection.Connection.Opts.SubPendingChannelCapacity);
     }
 
     /// <inheritdoc />
@@ -163,18 +184,18 @@ public sealed class NatsMessagingTransport : MessagingTransport
     /// </summary>
     /// <param name="context">The configuration context for the current start-up phase.</param>
     /// <param name="cancellationToken">A token to cancel start-up.</param>
-    /// <remarks>
-    /// The ordering is load-bearing. A JetStream publish to a subject no stream captures fails with
-    /// no-responders rather than silently succeeding the way RabbitMQ does, and consumers can only
-    /// be created once their stream exists.
-    /// </remarks>
+    // The ordering is load-bearing. A JetStream publish to a subject no stream captures fails with
+    // no-responders rather than silently succeeding the way RabbitMQ does, and consumers can only be
+    // created once their stream exists.
     protected override async ValueTask OnBeforeStartAsync(
         IMessagingConfigurationContext context,
         CancellationToken cancellationToken)
     {
         Capabilities = NatsServerCapabilities.FromServerVersion(Connection.Connection.ServerInfo?.Version);
 
-        EnsureConventionStream();
+        await EnsureConventionStreamAsync(cancellationToken);
+
+        WarnOnUnwieldyNames();
 
         await ProvisionStreamsAsync(cancellationToken);
 
@@ -186,55 +207,90 @@ public sealed class NatsMessagingTransport : MessagingTransport
     }
 
     /// <summary>
-    /// Creates the stream capturing this service's own subjects when none was declared.
+    /// Creates a stream for the subjects this service publishes that nothing else already captures.
     /// </summary>
-    /// <remarks>
-    /// Deferred until start-up because the subjects a service publishes are only known once routing
-    /// has resolved its endpoints. Deriving the stream from a configured name instead would produce
-    /// a subject filter that does not match the subjects Mocha's naming conventions actually
-    /// generate, and every consumer would then fail to resolve its stream.
-    /// <para>
-    /// Everything this needs is read from the topology rather than from
-    /// <see cref="MessagingTransport.Configuration"/>, which is no longer available once setup has
-    /// finished.
-    /// </para>
-    /// </remarks>
-    private void EnsureConventionStream()
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    // Subjects are derived from message types, so every service that touches a message type derives
+    // the same subject, and JetStream requires a stream's subjects to be disjoint from every other
+    // stream's. A service therefore claims only what is unclaimed and binds to the owning stream for
+    // the rest, which is what lets several services subscribe to one event.
+    //
+    // Deferred until start-up because the subjects a service publishes are only known once routing
+    // has resolved its endpoints, and because whether a subject is already captured is a question
+    // only the server can answer.
+    private async ValueTask EnsureConventionStreamAsync(CancellationToken cancellationToken)
     {
-        if (_topology.Streams.Count > 0)
+        var unclaimed = new List<string>();
+
+        foreach (var subject in _topology.Subjects)
         {
-            return;
+            if (subject.IsCore
+                || subject.StreamName is not null
+                || unclaimed.Contains(subject.Subject, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            // A stream declared on this bus is authoritative, so no round trip is needed for it.
+            if (_topology.FindStreamForSubject(subject.Subject) is not null)
+            {
+                continue;
+            }
+
+            if (await NatsStreamResolver.IsCapturedAsync(JetStream, subject.Subject, cancellationToken))
+            {
+                continue;
+            }
+
+            unclaimed.Add(subject.Subject);
         }
 
-        var subjects = _topology.Subjects
-            .Where(s => !s.IsCore)
-            .Select(s => s.Subject)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        if (subjects.Count == 0)
+        if (unclaimed.Count == 0)
         {
             return;
         }
 
         if (SchedulingEnabled)
         {
-            subjects.AddRange([.. subjects.Select(NatsScheduling.ToSchedulingSubject)]);
+            unclaimed.AddRange([.. unclaimed.Select(NatsScheduling.ToSchedulingSubject)]);
         }
 
         _topology.AddStream(new NatsStreamConfiguration
         {
             Name = NatsNaming.ToStreamName(_serviceName),
-            Subjects = subjects,
+            Subjects = unclaimed,
             AllowMsgTtl = SchedulingEnabled,
             AllowMsgSchedules = SchedulingEnabled,
             Origin = TopologyOrigin.Convention
         });
     }
 
-    private async ValueTask ProvisionStreamsAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Reports stream and consumer names long enough to make the server's storage directory names
+    /// unwieldy.
+    /// </summary>
+    private void WarnOnUnwieldyNames()
     {
         foreach (var stream in _topology.Streams)
+        {
+            if (stream.Name.Length > NatsNaming.RecommendedMaxNameLength)
+            {
+                _logger.UnwieldyName("stream", stream.Name, NatsNaming.RecommendedMaxNameLength);
+            }
+        }
+
+        foreach (var consumer in _topology.Consumers)
+        {
+            if (consumer.Name.Length > NatsNaming.RecommendedMaxNameLength)
+            {
+                _logger.UnwieldyName("consumer", consumer.Name, NatsNaming.RecommendedMaxNameLength);
+            }
+        }
+    }
+
+    private async ValueTask ProvisionStreamsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var stream in _topology.Streams.ToList())
         {
             if (!ShouldProvision(stream))
             {
@@ -243,9 +299,25 @@ public sealed class NatsMessagingTransport : MessagingTransport
 
             AssertStreamSupported(stream);
 
-            await stream.ProvisionAsync(JetStream, cancellationToken);
+            try
+            {
+                await stream.ProvisionAsync(JetStream, cancellationToken);
+            }
+            catch (NatsJSApiException exception)
+                when (stream.Origin is TopologyOrigin.Convention && IsSubjectOverlap(exception))
+            {
+                // Another service claimed these subjects between the check and the create. Yielding
+                // rather than failing start-up: the subjects resolve to the stream that won, which
+                // is the same outcome as having lost the race by a second.
+                _logger.YieldedConventionStream(stream.Name, exception.Error.Description);
+
+                _topology.RemoveStream(stream);
+            }
         }
     }
+
+    private static bool IsSubjectOverlap(NatsJSApiException exception)
+        => exception.Error.ErrCode == SubjectOverlapErrorCode;
 
     private async ValueTask ProvisionConsumersAsync(CancellationToken cancellationToken)
     {
@@ -296,7 +368,12 @@ public sealed class NatsMessagingTransport : MessagingTransport
                     new Dictionary<string, object?>
                     {
                         ["subjects"] = string.Join(", ", stream.Subjects),
-                        ["duplicateWindow"] = stream.DuplicateWindow,
+
+                        // Zero means the server's default applies rather than deduplication being
+                        // off, so reporting the number would misdescribe the stream.
+                        ["duplicateWindow"] = stream.DuplicateWindow == TimeSpan.Zero
+                            ? "server default"
+                            : stream.DuplicateWindow.ToString(),
                         ["allowMsgTtl"] = stream.AllowMsgTtl,
                         ["allowMsgSchedules"] = stream.AllowMsgSchedules,
                         ["autoProvision"] = stream.AutoProvision ?? _topology.AutoProvision,

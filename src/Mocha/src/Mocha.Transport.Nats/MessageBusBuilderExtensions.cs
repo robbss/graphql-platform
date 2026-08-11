@@ -1,7 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using Mocha.Middlewares;
 using Mocha.Scheduling;
-using Mocha.Transport.Nats.Middlewares;
 
 namespace Mocha.Transport.Nats;
 
@@ -47,41 +45,5 @@ public static class MessageBusBuilderExtensions
     public static IMessageBusHostBuilder AddNats(this IMessageBusHostBuilder busBuilder)
     {
         return busBuilder.AddNats(static _ => { });
-    }
-}
-
-/// <summary>
-/// Extension methods applying the transport's built-in defaults to a descriptor.
-/// </summary>
-public static class NatsMessagingTransportDescriptorExtensions
-{
-    /// <summary>
-    /// The URI scheme used by the NATS transport.
-    /// </summary>
-    public const string DefaultSchema = NatsTransportConfiguration.DefaultSchema;
-
-    /// <summary>
-    /// Applies the transport defaults before any user configuration runs.
-    /// </summary>
-    /// <param name="descriptor">The descriptor to configure.</param>
-    /// <returns>The descriptor for method chaining.</returns>
-    public static INatsMessagingTransportDescriptor AddDefaults(
-        this INatsMessagingTransportDescriptor descriptor)
-    {
-        ArgumentNullException.ThrowIfNull(descriptor);
-
-        descriptor
-            .Schema(DefaultSchema)
-            .UseRoutingStrategy(static _ => new NatsRoutingStrategy());
-
-        descriptor.UseReceive(
-            NatsReceiveMiddlewares.Acknowledgement,
-            after: ReceiveMiddlewares.ConcurrencyLimiter.Key);
-
-        descriptor.UseReceive(
-            NatsReceiveMiddlewares.Parsing,
-            after: NatsReceiveMiddlewares.Acknowledgement.Key);
-
-        return descriptor;
     }
 }

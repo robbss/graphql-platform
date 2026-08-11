@@ -10,6 +10,11 @@ namespace Mocha.Transport.Nats;
 public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INatsResource
 {
     /// <summary>
+    /// JetStream's <c>err_code</c> for a stream that does not exist.
+    /// </summary>
+    private const int StreamNotFoundErrorCode = 10059;
+
+    /// <summary>
     /// Gets the name of this stream as declared in JetStream.
     /// </summary>
     public string Name { get; private set; } = null!;
@@ -23,7 +28,8 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
     public bool? AutoProvision { get; private set; }
 
     /// <summary>
-    /// Gets the deduplication window applied to the <c>Nats-Msg-Id</c> header.
+    /// Gets the deduplication window applied to the <c>Nats-Msg-Id</c> header, or
+    /// <see cref="TimeSpan.Zero"/> when the server's own default applies.
     /// </summary>
     public TimeSpan DuplicateWindow { get; private set; }
 
@@ -98,6 +104,65 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
     /// <inheritdoc />
     public async ValueTask ProvisionAsync(INatsJSContext context, CancellationToken cancellationToken)
     {
+        if (Origin is TopologyOrigin.Convention)
+        {
+            await AdoptExistingConfigurationAsync(context, cancellationToken);
+        }
+
         await context.CreateOrUpdateStreamAsync(_config, cancellationToken);
+    }
+
+    /// <summary>
+    /// Rebases this stream on the configuration the server already holds, adding its own subjects to
+    /// it rather than replacing anything.
+    /// </summary>
+    /// <param name="context">The JetStream context used to query the server.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <remarks>
+    /// A convention stream is shared: services bind to whichever stream already captures a subject,
+    /// so this service is only ever adding subjects to a stream someone else may own. An update
+    /// sends the whole configuration, so without rebasing it would strip the subjects its peers
+    /// publish to and overwrite the storage, retention and limits its owner chose, which the server
+    /// rejects outright for storage. Only convention streams do this; an explicit declaration stays
+    /// authoritative.
+    /// </remarks>
+    private async ValueTask AdoptExistingConfigurationAsync(
+        INatsJSContext context,
+        CancellationToken cancellationToken)
+    {
+        INatsJSStream existing;
+
+        try
+        {
+            existing = await context.GetStreamAsync(Name, cancellationToken: cancellationToken);
+        }
+        catch (NatsJSApiException exception) when (exception.Error.ErrCode == StreamNotFoundErrorCode)
+        {
+            return;
+        }
+
+        var adopted = existing.Info.Config;
+        var subjects = (adopted.Subjects ?? []).ToList();
+
+        foreach (var subject in Subjects)
+        {
+            if (!subjects.Contains(subject, StringComparer.Ordinal))
+            {
+                subjects.Add(subject);
+            }
+        }
+
+        adopted.Subjects = [.. subjects];
+
+        // Only ever turned on, never off: a peer bound to this stream may depend on them.
+        adopted.AllowMsgTTL = adopted.AllowMsgTTL || AllowMsgTtl;
+        adopted.AllowMsgSchedules = adopted.AllowMsgSchedules || AllowMsgSchedules;
+
+        _config = adopted;
+
+        Subjects = [.. subjects];
+        DuplicateWindow = adopted.DuplicateWindow;
+        AllowMsgTtl = adopted.AllowMsgTTL;
+        AllowMsgSchedules = adopted.AllowMsgSchedules;
     }
 }

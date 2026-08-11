@@ -43,13 +43,28 @@ public interface INatsStreamTopologyDescriptor : IMessagingDescriptor<NatsStream
     INatsStreamTopologyDescriptor Replicas(int replicas);
 
     /// <summary>
-    /// Enables broker-side deduplication over the window, keyed on the message identifier.
+    /// Sets the maximum number of messages retained, after which the oldest are discarded.
+    /// </summary>
+    /// <param name="maxMsgs">The message limit.</param>
+    /// <returns>The descriptor for method chaining.</returns>
+    INatsStreamTopologyDescriptor MaxMessages(long maxMsgs);
+
+    /// <summary>
+    /// Sets the maximum total size of the stream in bytes, after which the oldest messages are
+    /// discarded.
+    /// </summary>
+    /// <param name="maxBytes">The size limit in bytes.</param>
+    /// <returns>The descriptor for method chaining.</returns>
+    INatsStreamTopologyDescriptor MaxBytes(long maxBytes);
+
+    /// <summary>
+    /// Sets the window within which a repeated message identifier is treated as a duplicate.
     /// </summary>
     /// <param name="window">The deduplication window.</param>
     /// <returns>The descriptor for method chaining.</returns>
     /// <remarks>
-    /// Deduplication is disabled by default. Enabling it is a lighter-weight alternative to the
-    /// inbox pattern for publishers that may retry.
+    /// Deduplication cannot be turned off, only widened or narrowed: leaving the window unset makes
+    /// the server apply its own default rather than disabling it.
     /// </remarks>
     INatsStreamTopologyDescriptor DeduplicateWithin(TimeSpan window);
 

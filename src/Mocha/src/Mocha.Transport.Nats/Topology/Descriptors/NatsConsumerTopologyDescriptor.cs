@@ -1,3 +1,5 @@
+using NATS.Client.JetStream.Models;
+
 namespace Mocha.Transport.Nats;
 
 /// <summary>
@@ -87,6 +89,13 @@ public sealed class NatsConsumerTopologyDescriptor
     public INatsConsumerTopologyDescriptor AckProgressEvery(TimeSpan interval)
     {
         Configuration.AckProgressInterval = interval;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public INatsConsumerTopologyDescriptor DeliverFrom(ConsumerConfigDeliverPolicy deliverPolicy)
+    {
+        Configuration.DeliverPolicy = deliverPolicy;
         return this;
     }
 

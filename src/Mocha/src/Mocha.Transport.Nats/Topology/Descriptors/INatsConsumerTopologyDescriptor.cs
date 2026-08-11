@@ -1,3 +1,5 @@
+using NATS.Client.JetStream.Models;
+
 namespace Mocha.Transport.Nats;
 
 /// <summary>
@@ -67,6 +69,13 @@ public interface INatsConsumerTopologyDescriptor : IMessagingDescriptor<NatsCons
     /// otherwise be redelivered while still being processed.
     /// </remarks>
     INatsConsumerTopologyDescriptor AckProgressEvery(TimeSpan interval);
+
+    /// <summary>
+    /// Sets where a newly created consumer starts reading. Has no effect once the consumer exists.
+    /// </summary>
+    /// <param name="deliverPolicy">The delivery policy.</param>
+    /// <returns>The descriptor for method chaining.</returns>
+    INatsConsumerTopologyDescriptor DeliverFrom(ConsumerConfigDeliverPolicy deliverPolicy);
 
     /// <summary>
     /// Controls whether this consumer is provisioned during start-up.

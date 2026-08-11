@@ -6,10 +6,8 @@ namespace Mocha.Transport.Nats;
 /// Builds and parses transport addresses of the form
 /// <c>nats://host:port/&lt;stream&gt;/{s|c}/&lt;name&gt;</c>.
 /// </summary>
-/// <remarks>
-/// The <c>s</c> and <c>c</c> discriminators mirror the <c>e</c> and <c>q</c> segments the RabbitMQ
-/// transport uses, so reply addresses parse back the same way.
-/// </remarks>
+// The s and c discriminators mirror the e and q segments the RabbitMQ transport uses, so reply
+// addresses parse back the same way.
 public static class NatsAddress
 {
     /// <summary>
@@ -74,21 +72,28 @@ public static class NatsAddress
             return false;
         }
 
-        var segments = address.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var path = address.AbsolutePath.AsSpan();
 
-        if (segments.Length != 3)
+        // One slot more than the three segments wanted: Split puts everything left over into the
+        // final range instead of reporting an overflow, so a longer path would otherwise look like a
+        // match with a trailing segment glued on.
+        Span<Range> ranges = stackalloc Range[4];
+
+        if (path.Split(ranges, '/', StringSplitOptions.RemoveEmptyEntries) != 3)
         {
             return false;
         }
 
-        if (segments[1] is not (SubjectSegment or ConsumerSegment))
+        var kindSpan = path[ranges[1]];
+
+        if (!kindSpan.SequenceEqual(SubjectSegment) && !kindSpan.SequenceEqual(ConsumerSegment))
         {
             return false;
         }
 
-        stream = Uri.UnescapeDataString(segments[0]);
-        kind = segments[1];
-        name = Uri.UnescapeDataString(segments[2]);
+        stream = Uri.UnescapeDataString(path[ranges[0]].ToString());
+        kind = kindSpan.SequenceEqual(SubjectSegment) ? SubjectSegment : ConsumerSegment;
+        name = Uri.UnescapeDataString(path[ranges[2]].ToString());
 
         return true;
     }

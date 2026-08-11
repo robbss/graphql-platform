@@ -167,12 +167,15 @@ public sealed class NatsRoutingStrategy : RoutingStrategy<NatsMessagingTransport
         EnsureFaultSubject(natsConfiguration.Features.Get<ReceiveFaultEndpointFeature>()?.Address);
         EnsureFaultSubject(natsConfiguration.Features.Get<ReceiveSkippedEndpointFeature>()?.Address);
 
+        // MaxConcurrency is deliberately not mapped onto MaxAckPending. It bounds how many messages
+        // this process handles at once, whereas MaxAckPending is the server-side ceiling shared by
+        // every instance reading the durable, and lowering it to one instance's concurrency would
+        // starve the others.
         Topology.AddConsumer(new NatsConsumerConfiguration
         {
             Name = natsConfiguration.ConsumerName,
             StreamName = natsConfiguration.StreamName,
             FilterSubjects = natsConfiguration.FilterSubjects,
-            MaxAckPending = natsConfiguration.MaxConcurrency,
             AutoProvision = natsConfiguration.AutoProvision,
             Origin = TopologyOrigin.Endpoint
         });
@@ -230,11 +233,13 @@ public sealed class NatsRoutingStrategy : RoutingStrategy<NatsMessagingTransport
                 continue;
             }
 
-            var outboundKind = route.Kind is InboundRouteKind.Subscribe
-                ? OutboundRouteKind.Publish
-                : OutboundRouteKind.Send;
-
-            var subject = NatsDestinations.ResolveConvention(context.Naming, outboundKind, messageType);
+            // Deliberately independent of the route kind. The kind records how the handler was
+            // registered, not how a sender dispatches, so deriving the subject from it would filter
+            // the wrong one whenever an event handler is sent to, or a request handler published to.
+            var subject = NatsDestinations.ResolveConvention(
+                context.Naming,
+                OutboundRouteKind.Publish,
+                messageType);
 
             if (!configuration.FilterSubjects.Contains(subject))
             {

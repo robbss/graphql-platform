@@ -17,11 +17,10 @@ public sealed class NatsSubjectConfiguration : TopologyConfiguration<NatsMessagi
 
     /// <summary>
     /// Gets or sets a value indicating whether this subject is used over core NATS rather than
-    /// JetStream, as reply inboxes are.
+    /// JetStream, as reply inboxes are. Core subjects are excluded from stream subject filters and
+    /// from start-up subject verification.
     /// </summary>
-    /// <remarks>
-    /// Core subjects are excluded from stream subject filters and from start-up subject
-    /// verification: capturing an ephemeral reply inbox in a stream would persist every response.
-    /// </remarks>
+    // Capturing an ephemeral reply inbox in a stream would persist every response for the stream's
+    // whole retention period.
     public bool IsCore { get; set; }
 }

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Mocha.Features;
 using Mocha.Middlewares;
 using Mocha.Transport.Nats.Features;
@@ -30,7 +32,11 @@ internal sealed class NatsAcknowledgementMiddleware
 
         var cancellationToken = context.CancellationToken;
 
-        using var progress = AckProgressReporter.Start(message, feature.AckProgressInterval, cancellationToken);
+        using var progress = AckProgressReporter.Start(
+            message,
+            feature.AckProgressInterval,
+            context.Services,
+            cancellationToken);
 
         try
         {
@@ -67,6 +73,7 @@ internal sealed class NatsAcknowledgementMiddleware
         public static AckProgressReporter? Start(
             INatsJSMsg<ReadOnlyMemory<byte>> message,
             TimeSpan? interval,
+            IServiceProvider services,
             CancellationToken cancellationToken)
         {
             if (interval is not { } period || period <= TimeSpan.Zero)
@@ -74,9 +81,13 @@ internal sealed class NatsAcknowledgementMiddleware
                 return null;
             }
 
+            // Resolved only once progress reporting is actually in use, to keep it off the path every
+            // other message takes.
+            var logger = services.GetRequiredService<ILogger<NatsAcknowledgementMiddleware>>();
+
             var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-            _ = ReportAsync(message, period, cancellation.Token);
+            _ = ReportAsync(message, period, logger, cancellation.Token);
 
             return new AckProgressReporter(cancellation);
         }
@@ -90,6 +101,7 @@ internal sealed class NatsAcknowledgementMiddleware
         private static async Task ReportAsync(
             INatsJSMsg<ReadOnlyMemory<byte>> message,
             TimeSpan period,
+            ILogger logger,
             CancellationToken cancellationToken)
         {
             try
@@ -104,6 +116,13 @@ internal sealed class NatsAcknowledgementMiddleware
             catch (OperationCanceledException)
             {
                 // Expected: the handler finished, so there is no deadline left to extend.
+            }
+            catch (Exception exception)
+            {
+                // Logged rather than rethrown: nobody awaits this task, so an escaping exception
+                // would surface only as an unobserved one. The handler keeps running, and its message
+                // is redelivered once the deadline expires.
+                logger.AckProgressFailed(exception);
             }
         }
     }

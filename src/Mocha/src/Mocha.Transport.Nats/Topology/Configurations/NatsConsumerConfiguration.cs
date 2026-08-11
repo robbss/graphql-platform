@@ -56,9 +56,8 @@ public sealed class NatsConsumerConfiguration : TopologyConfiguration<NatsMessag
     /// deadline, or <see langword="null"/> to never report progress.
     /// </summary>
     /// <remarks>
-    /// Off by default because reporting progress costs a background task per in-flight message,
-    /// and most handlers finish well inside <see cref="AckWait"/>. Enable it for handlers that can
-    /// legitimately run longer, which would otherwise be redelivered while still working.
+    /// Set this for handlers that can legitimately run longer than <see cref="AckWait"/>, which
+    /// would otherwise be redelivered while still working.
     /// </remarks>
     public TimeSpan? AckProgressInterval { get; set; }
 

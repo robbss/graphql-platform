@@ -21,10 +21,8 @@ internal sealed class NatsMessageHeadersWriter
     /// </summary>
     /// <param name="envelope">The envelope to write.</param>
     /// <returns>A new <see cref="NatsHeaders"/> instance owned by the caller.</returns>
-    /// <remarks>
-    /// A fresh instance is returned per call because NATS.Net 3.0 no longer makes headers read-only
-    /// after publishing, so sharing one across concurrent publishes is unsafe.
-    /// </remarks>
+    // A fresh instance per call: NATS.Net 3.0 no longer makes headers read-only after publishing, so
+    // sharing one across concurrent publishes is unsafe.
     public NatsHeaders Write(MessageEnvelope envelope)
     {
         var headers = new NatsHeaders();
@@ -38,7 +36,7 @@ internal sealed class NatsMessageHeadersWriter
                     continue;
                 }
 
-                headers.Add(header.Key, Sanitize(Format(header.Value)));
+                headers.Add(ValidateKey(header.Key), FormatValues(header.Value));
             }
         }
 
@@ -73,16 +71,44 @@ internal sealed class NatsMessageHeadersWriter
     }
 
     /// <summary>
+    /// Returns the header key, rejecting one that cannot be expressed in a NATS header.
+    /// </summary>
+    /// <param name="key">The header key to validate.</param>
+    /// <returns>The key, when it is legal.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// The key contains a colon, whitespace or a control character.
+    /// </exception>
+    /// <remarks>
+    /// Rejected rather than sanitized. NATS.Net does not validate keys, and the header block is
+    /// framed as newline-separated <c>Key: Value</c> pairs, so a key carrying a colon or a line break
+    /// does not corrupt only this message: it desynchronises framing for everything else on the
+    /// connection. Renaming the key instead would leave the header silently arriving under a
+    /// different name.
+    /// </remarks>
+    private static string ValidateKey(string key)
+    {
+        foreach (var character in key)
+        {
+            if (character is ':' || char.IsWhiteSpace(character) || char.IsControl(character))
+            {
+                throw new InvalidOperationException(
+                    $"Header '{key}' cannot be sent over NATS. Header keys cannot contain ':', "
+                    + "whitespace or control characters.");
+            }
+        }
+
+        return key;
+    }
+
+    /// <summary>
     /// Replaces line breaks and control characters so a value is legal in a NATS header.
     /// </summary>
     /// <param name="value">The value to sanitize.</param>
     /// <returns>The value with line breaks and control characters collapsed to spaces.</returns>
-    /// <remarks>
-    /// NATS rejects header values containing CRLF, because the wire protocol is line-based. Mocha's
-    /// fault middleware puts an exception stack trace in a header, which is multi-line, so without
-    /// this every dead-lettered message would fail to publish. AMQP has no such restriction, which
-    /// is why the RabbitMQ transport does not need it.
-    /// </remarks>
+    // NATS rejects header values containing CRLF, because the wire protocol is line-based. Mocha's
+    // fault middleware puts a multi-line exception stack trace in a header, so without this every
+    // dead-lettered message would fail to publish. AMQP has no such restriction, which is why the
+    // RabbitMQ transport does not need it.
     private static string Sanitize(string value)
     {
         var needsSanitizing = false;
@@ -113,6 +139,35 @@ internal sealed class NatsMessageHeadersWriter
 
     private static string? Format(DateTimeOffset? value)
         => value?.ToString("O", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Formats a user-defined header value, preserving a multi-valued header as several values
+    /// rather than collapsing it into one.
+    /// </summary>
+    /// <param name="value">The value to format.</param>
+    /// <returns>The values to write under the header key.</returns>
+    /// <remarks>
+    /// A header parsed from an inbound message keeps its repeated values as an array, so an envelope
+    /// that is republished (forwarded, or dead-lettered to an error subject) passes one back through
+    /// here. Without this case the array would stringify to its type name and the values would be
+    /// lost.
+    /// </remarks>
+    private static StringValues FormatValues(object value)
+    {
+        if (value is string text)
+        {
+            return Sanitize(text);
+        }
+
+        if (value is IEnumerable<string> values)
+        {
+            var formatted = values.Select(static v => v is null ? null : Sanitize(v)).ToArray();
+
+            return formatted.Length == 1 ? formatted[0] : new StringValues(formatted);
+        }
+
+        return Sanitize(Format(value));
+    }
 
     private static string Format(object value) => value switch
     {

@@ -11,15 +11,12 @@ namespace Mocha.Transport.Nats;
 internal static class NatsMessageHeaders
 {
     /// <summary>
-    /// The JetStream deduplication key.
+    /// The JetStream deduplication key, which is qualified by destination subject and is not the
+    /// message identifier. The identifier travels in <see cref="MessageId"/>.
     /// </summary>
-    /// <remarks>
-    /// This is not the message identifier. Deduplication is scoped to the stream rather than to the
-    /// subject, so publishing an envelope to a second subject in the same stream under its own
-    /// identifier would be discarded as a duplicate, which is exactly what republishing a faulted
-    /// message to an error subject does. The dispatch endpoint therefore writes a key qualified by
-    /// destination subject, and the identifier itself travels in <see cref="MessageId"/>.
-    /// </remarks>
+    // Deduplication is scoped to the stream rather than to the subject, so republishing an envelope
+    // to a second subject in the same stream under its own identifier would be discarded as a
+    // duplicate. Dead-lettering to an error subject does exactly that, hence the qualification.
     public const string DeduplicationKey = "Nats-Msg-Id";
 
     /// <summary>

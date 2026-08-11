@@ -26,7 +26,13 @@ public sealed class NatsConsumer : TopologyResource<NatsConsumerConfiguration>, 
     public string? StreamName { get; private set; }
 
     /// <summary>
-    /// Gets the maximum number of unacknowledged messages in flight.
+    /// The ceiling applied when none is declared, matching JetStream's own default.
+    /// </summary>
+    public const long DefaultMaxAckPending = 1000;
+
+    /// <summary>
+    /// Gets the maximum number of unacknowledged messages in flight across every instance reading
+    /// this consumer.
     /// </summary>
     public long MaxAckPending { get; private set; }
 
@@ -55,7 +61,7 @@ public sealed class NatsConsumer : TopologyResource<NatsConsumerConfiguration>, 
 
         FilterSubjects = [.. configuration.FilterSubjects ?? []];
         StreamName = configuration.StreamName;
-        MaxAckPending = configuration.MaxAckPending ?? 1000;
+        MaxAckPending = configuration.MaxAckPending ?? DefaultMaxAckPending;
         AckProgressInterval = configuration.AckProgressInterval;
         AutoProvision = configuration.AutoProvision;
 
@@ -96,13 +102,47 @@ public sealed class NatsConsumer : TopologyResource<NatsConsumerConfiguration>, 
     }
 
     /// <summary>
+    /// Folds a second declaration of this consumer into the existing one.
+    /// </summary>
+    /// <param name="configuration">The configuration to fold in.</param>
+    /// <remarks>
+    /// A consumer can be declared explicitly and also derived from a receive endpoint that resolves
+    /// to the same durable name. Filter subjects are unioned, and settings already present win, so an
+    /// explicit declaration is not overwritten by the endpoint that adopts it. Nothing here touches
+    /// the acknowledgement settings, which only an explicit declaration ever sets.
+    /// </remarks>
+    internal void Merge(NatsConsumerConfiguration configuration)
+    {
+        if (configuration.FilterSubjects is { Count: > 0 } incoming)
+        {
+            var subjects = FilterSubjects.ToList();
+
+            foreach (var subject in incoming)
+            {
+                if (!subjects.Contains(subject, StringComparer.Ordinal))
+                {
+                    subjects.Add(subject);
+                }
+            }
+
+            FilterSubjects = [.. subjects];
+            _config.FilterSubjects = [.. subjects];
+        }
+
+        AutoProvision ??= configuration.AutoProvision;
+
+        if (StreamName is null && configuration.StreamName is { } streamName)
+        {
+            BindToStream(streamName);
+        }
+    }
+
+    /// <summary>
     /// Binds this consumer to the stream that captures its filter subjects.
     /// </summary>
     /// <param name="streamName">The resolved stream name.</param>
-    /// <remarks>
-    /// Called during start-up once the owning stream has been resolved, because the stream that
-    /// captures a subject belongs to the publishing service rather than to this one.
-    /// </remarks>
+    // Called during start-up once the owning stream has been resolved, which may be a stream this
+    // service neither declares nor owns.
     public void BindToStream(string streamName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(streamName);

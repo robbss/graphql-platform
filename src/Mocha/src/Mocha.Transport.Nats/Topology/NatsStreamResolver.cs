@@ -3,13 +3,11 @@ using NATS.Client.JetStream;
 namespace Mocha.Transport.Nats;
 
 /// <summary>
-/// Binds each durable consumer to the stream that captures its subjects.
+/// Binds each durable consumer and published subject to the stream that captures it.
 /// </summary>
-/// <remarks>
-/// A JetStream consumer has to be created on the stream capturing its subject, and that stream
-/// belongs to the publishing service. RabbitMQ has no equivalent constraint, so this step exists to
-/// keep subscribers declaring what they consume rather than where it lives.
-/// </remarks>
+// A JetStream consumer has to be created on the stream capturing its subject, and that stream may
+// belong to another service. Resolving it here is what lets a subscriber declare what it consumes
+// rather than where it lives.
 internal static class NatsStreamResolver
 {
     /// <summary>
@@ -66,18 +64,15 @@ internal static class NatsStreamResolver
                 continue;
             }
 
-            var matches = await ListStreamsAsync(jetStream, subject.Subject, cancellationToken);
+            var streamName = await ResolveSingleStreamAsync(
+                jetStream,
+                subject.Subject,
+                "which this service publishes to. Add it to a stream's subjects, or declare the "
+                + "stream that should capture it. Publishing to an uncaptured subject does not fail "
+                + "immediately, it times out waiting for an acknowledgement",
+                cancellationToken);
 
-            if (matches.Count == 0)
-            {
-                throw new InvalidOperationException(
-                    $"No stream captures subject '{subject.Subject}', which this service publishes "
-                    + "to. Add it to a stream's subjects, or declare the stream that should capture "
-                    + "it. Publishing to an uncaptured subject does not fail immediately, it times "
-                    + "out waiting for an acknowledgement.");
-            }
-
-            subject.BindToStream(matches[0]);
+            subject.BindToStream(streamName);
         }
     }
 
@@ -120,6 +115,26 @@ internal static class NatsStreamResolver
         return resolved!;
     }
 
+    /// <summary>
+    /// Determines whether any stream on the server already captures the specified subject.
+    /// </summary>
+    /// <param name="jetStream">The JetStream context used to query the server.</param>
+    /// <param name="subject">The subject to look for.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns><see langword="true"/> when a stream captures the subject.</returns>
+    public static async ValueTask<bool> IsCapturedAsync(
+        INatsJSContext jetStream,
+        string subject,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var _ in jetStream.ListStreamNamesAsync(subject, cancellationToken))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private static async ValueTask<List<string>> ListStreamsAsync(
         INatsJSContext jetStream,
         string subject,
@@ -135,10 +150,39 @@ internal static class NatsStreamResolver
         return matches;
     }
 
-    private static async ValueTask<string> QueryStreamAsync(
+    private static ValueTask<string> QueryStreamAsync(
         INatsJSContext jetStream,
         NatsConsumer consumer,
         string subject,
+        CancellationToken cancellationToken)
+        => ResolveSingleStreamAsync(
+            jetStream,
+            subject,
+            $"required by consumer '{consumer.Name}'. The publishing service may not have been "
+            + "deployed yet, or its stream was never provisioned. Declare the stream with FromStream "
+            + "so this service provisions it regardless of start-up order",
+            cancellationToken);
+
+    /// <summary>
+    /// Resolves the single stream capturing a subject, failing when there is not exactly one.
+    /// </summary>
+    /// <param name="jetStream">The JetStream context used to query the server.</param>
+    /// <param name="subject">The subject to resolve.</param>
+    /// <param name="context">
+    /// What the subject is needed for, used to complete the not-found message.
+    /// </param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The name of the capturing stream.</returns>
+    /// <remarks>
+    /// Ambiguity is rejected rather than resolved by picking one, because which stream came back
+    /// first is not something the caller can predict or control. The server refuses to create streams
+    /// with overlapping subjects, so more than one match means the subject is a wildcard reaching
+    /// across stream boundaries.
+    /// </remarks>
+    private static async ValueTask<string> ResolveSingleStreamAsync(
+        INatsJSContext jetStream,
+        string subject,
+        string context,
         CancellationToken cancellationToken)
     {
         var matches = await ListStreamsAsync(jetStream, subject, cancellationToken);
@@ -150,16 +194,11 @@ internal static class NatsStreamResolver
 
         if (matches.Count == 0)
         {
-            throw new InvalidOperationException(
-                $"No stream captures subject '{subject}', required by consumer '{consumer.Name}'. "
-                + "The publishing service may not have been deployed yet, or its stream was never "
-                + "provisioned. Declare the stream with FromStream so this service provisions it "
-                + "regardless of start-up order.");
+            throw new InvalidOperationException($"No stream captures subject '{subject}', {context}.");
         }
 
         throw new InvalidOperationException(
-            $"Subject '{subject}', required by consumer '{consumer.Name}', is captured by "
-            + $"{matches.Count} streams ({string.Join(", ", matches)}). Declare the intended stream "
-            + "with FromStream.");
+            $"Subject '{subject}' is captured by {matches.Count} streams "
+            + $"({string.Join(", ", matches)}), {context}.");
     }
 }

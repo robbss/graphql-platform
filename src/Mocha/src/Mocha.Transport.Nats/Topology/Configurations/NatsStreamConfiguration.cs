@@ -49,8 +49,12 @@ public sealed class NatsStreamConfiguration : TopologyConfiguration<NatsMessagin
 
     /// <summary>
     /// Gets or sets the window within which a repeated <c>Nats-Msg-Id</c> is treated as a duplicate.
-    /// Defaults to zero, leaving broker-side deduplication disabled.
+    /// When left unset the server applies its own default, which does not disable deduplication.
     /// </summary>
+    /// <remarks>
+    /// Deduplication cannot be turned off from here. A zero window is omitted from the request the
+    /// client sends, so the server falls back to its default of two minutes.
+    /// </remarks>
     public TimeSpan? DuplicateWindow { get; set; }
 
     /// <summary>

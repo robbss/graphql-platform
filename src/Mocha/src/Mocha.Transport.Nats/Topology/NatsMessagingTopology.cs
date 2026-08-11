@@ -73,7 +73,8 @@ public sealed class NatsMessagingTopology(
     }
 
     /// <summary>
-    /// Adds a durable consumer to the topology, or returns the existing consumer with the same name.
+    /// Adds a durable consumer to the topology, folding the configuration into the existing consumer
+    /// when one with the same name is already present.
     /// </summary>
     /// <param name="configuration">The consumer configuration.</param>
     /// <returns>The new or existing consumer.</returns>
@@ -87,6 +88,8 @@ public sealed class NatsMessagingTopology(
 
             if (existing is not null)
             {
+                existing.Merge(configuration);
+
                 return existing;
             }
 
@@ -127,6 +130,25 @@ public sealed class NatsMessagingTopology(
             subject.Complete();
 
             return subject;
+        }
+    }
+
+    /// <summary>
+    /// Removes a stream from the topology.
+    /// </summary>
+    /// <param name="stream">The stream to remove.</param>
+    /// <returns><see langword="true"/> when the stream was present.</returns>
+    /// <remarks>
+    /// Used when a convention stream turns out not to be this service's to create, so that the
+    /// subjects it would have claimed resolve to the stream that already owns them.
+    /// </remarks>
+    public bool RemoveStream(NatsStream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+
+        lock (_lock)
+        {
+            return _streams.Remove(stream);
         }
     }
 

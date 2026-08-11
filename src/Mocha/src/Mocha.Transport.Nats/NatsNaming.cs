@@ -35,18 +35,6 @@ public static class NatsNaming
     }
 
     /// <summary>
-    /// Derives the subject filter a service's stream captures.
-    /// </summary>
-    /// <param name="serviceName">The logical service name, for example <c>order-service</c>.</param>
-    /// <returns>The wildcard subject filter, for example <c>order-service.&gt;</c>.</returns>
-    public static string ToStreamSubjectFilter(string serviceName)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
-
-        return $"{serviceName}.>";
-    }
-
-    /// <summary>
     /// Derives the durable consumer name for a Mocha endpoint name.
     /// </summary>
     /// <param name="endpointName">The endpoint name, for example <c>order-service.order-created</c>.</param>

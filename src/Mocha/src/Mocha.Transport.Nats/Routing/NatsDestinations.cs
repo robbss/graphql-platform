@@ -6,10 +6,8 @@ namespace Mocha.Transport.Nats;
 /// <summary>
 /// Resolves outbound routes to the subject they publish to.
 /// </summary>
-/// <remarks>
-/// NATS has a single destination kind, so this collapses the exchange and queue distinction the
-/// RabbitMQ transport has to make into one subject.
-/// </remarks>
+// NATS has a single destination kind, so this collapses the exchange and queue distinction the
+// RabbitMQ transport has to make into one subject.
 internal static class NatsDestinations
 {
     /// <summary>
@@ -32,25 +30,27 @@ internal static class NatsDestinations
     }
 
     /// <summary>
-    /// Resolves the conventional subject for a message type.
+    /// Resolves the conventional subject for a message type. Send and Publish resolve to the same
+    /// subject.
     /// </summary>
     /// <param name="naming">The bus naming conventions.</param>
     /// <param name="kind">The outbound route kind.</param>
     /// <param name="messageType">The message type.</param>
     /// <returns>The subject to publish to.</returns>
-    /// <remarks>
-    /// Send and Publish converge on the same subject: subscribers select what they receive through
-    /// consumer filters, so there is no need for the separate send and publish exchanges the
-    /// RabbitMQ transport creates.
-    /// </remarks>
+    // Subscribers select what they receive through consumer filters, so there is no need for the
+    // separate send and publish exchanges the RabbitMQ transport creates and chains together.
+    //
+    // Converging on the publish name rather than the send name because the send name is a single bare
+    // token, which would put every message type in one flat global namespace, while a consumer can
+    // only read from one stream and so cannot bridge the two names itself.
     public static string ResolveConvention(
         IBusNamingConventions naming,
         OutboundRouteKind kind,
         MessageType messageType)
         => kind switch
         {
-            OutboundRouteKind.Send => naming.GetSendEndpointName(messageType.RuntimeType),
-            OutboundRouteKind.Publish => naming.GetPublishEndpointName(messageType.RuntimeType),
+            OutboundRouteKind.Send or OutboundRouteKind.Publish
+                => naming.GetPublishEndpointName(messageType.RuntimeType),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
 
@@ -73,17 +73,24 @@ internal static class NatsDestinations
             return true;
         }
 
-        var segments = destination.AbsolutePath.Split('/', RemoveEmptyEntries | TrimEntries);
+        var path = destination.AbsolutePath.AsSpan();
 
-        if (destination.Scheme is "subject" && segments.Length == 1)
+        // One slot spare, so a path with more segments than expected is rejected rather than having
+        // the remainder folded into the last range.
+        Span<Range> ranges = stackalloc Range[3];
+        var segmentCount = path.Split(ranges, '/', RemoveEmptyEntries | TrimEntries);
+
+        if (destination.Scheme is "subject" && segmentCount == 1)
         {
-            subject = segments[0];
+            subject = Uri.UnescapeDataString(path[ranges[0]].ToString());
             return true;
         }
 
-        if (destination.Scheme == schema && segments.Length == 2 && segments[0] == NatsAddress.SubjectSegment)
+        if (destination.Scheme == schema
+            && segmentCount == 2
+            && path[ranges[0]].SequenceEqual(NatsAddress.SubjectSegment))
         {
-            subject = segments[1];
+            subject = Uri.UnescapeDataString(path[ranges[1]].ToString());
             return true;
         }
 

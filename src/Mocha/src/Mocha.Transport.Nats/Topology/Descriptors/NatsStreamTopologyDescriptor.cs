@@ -77,6 +77,20 @@ public sealed class NatsStreamTopologyDescriptor
     }
 
     /// <inheritdoc />
+    public INatsStreamTopologyDescriptor MaxMessages(long maxMsgs)
+    {
+        Configuration.MaxMsgs = maxMsgs;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public INatsStreamTopologyDescriptor MaxBytes(long maxBytes)
+    {
+        Configuration.MaxBytes = maxBytes;
+        return this;
+    }
+
+    /// <inheritdoc />
     public INatsStreamTopologyDescriptor DeduplicateWithin(TimeSpan window)
     {
         Configuration.DuplicateWindow = window;
