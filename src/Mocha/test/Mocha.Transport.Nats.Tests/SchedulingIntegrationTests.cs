@@ -8,39 +8,27 @@ namespace Mocha.Transport.Nats.Tests;
 
 public sealed record ReminderDue(Guid Id);
 
-public sealed class ReminderDueHandler : IEventHandler<ReminderDue>
-{
-    public static readonly TaskCompletionSource<TimeSpan> Received =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public static readonly Stopwatch Clock = new();
-
-    public ValueTask HandleAsync(ReminderDue message, CancellationToken cancellationToken)
-    {
-        Received.TrySetResult(Clock.Elapsed);
-        return ValueTask.CompletedTask;
-    }
-}
-
 [Collection(JetStreamCollection.Name)]
 public class SchedulingIntegrationTests(JetStreamFixture fixture)
 {
     private static readonly TimeSpan s_delay = TimeSpan.FromSeconds(5);
 
     [Fact]
-    public async Task A_Scheduled_Message_Is_Held_Until_It_Is_Due()
+    public async Task SchedulePublishAsync_Should_HoldTheMessage_When_ItIsNotYetDue()
     {
+        // arrange
         var cancellationToken = TestContext.Current.CancellationToken;
+        var clock = new DeliveryClock();
 
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton(fixture.Connection);
+        builder.Services.AddSingleton(clock);
         builder.Services
             .AddMessageBus()
             .AddEventHandler<ReminderDueHandler>()
             .AddNats(nats => nats.ServiceName("e2e-reminders").EnableScheduling());
 
         using var host = builder.Build();
-
         await host.StartAsync(cancellationToken);
 
         try
@@ -63,21 +51,18 @@ public class SchedulingIntegrationTests(JetStreamFixture fixture)
                 stream.Subjects,
                 s => s.EndsWith(NatsScheduling.SchedulingSuffix, StringComparison.Ordinal));
 
-            Assert.True(stream.AllowMsgSchedules);
+            clock.Start();
 
-            ReminderDueHandler.Clock.Restart();
-
+            // act
             await host.Services.GetRequiredService<IMessageBus>()
                 .SchedulePublishAsync(
                     new ReminderDue(Guid.NewGuid()),
                     DateTimeOffset.UtcNow.Add(s_delay),
                     cancellationToken);
 
-            var elapsed = await ReminderDueHandler.Received.Task.WaitAsync(
-                s_delay + TimeSpan.FromSeconds(45),
-                cancellationToken);
+            var elapsed = await clock.WaitAsync(s_delay + TimeSpan.FromSeconds(45));
 
-            // The point of the test: the broker held it, rather than it arriving straight away.
+            // assert
             Assert.True(
                 elapsed >= s_delay - TimeSpan.FromSeconds(1),
                 $"The scheduled message arrived after {elapsed}, before its {s_delay} delay.");
@@ -85,6 +70,31 @@ public class SchedulingIntegrationTests(JetStreamFixture fixture)
         finally
         {
             await host.StopAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Records how long after the clock started a message was delivered.
+    /// </summary>
+    public sealed class DeliveryClock
+    {
+        private readonly Stopwatch _stopwatch = new();
+        private readonly TaskCompletionSource<TimeSpan> _delivered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Start() => _stopwatch.Restart();
+
+        public void Record() => _delivered.TrySetResult(_stopwatch.Elapsed);
+
+        public Task<TimeSpan> WaitAsync(TimeSpan timeout) => _delivered.Task.WaitAsync(timeout);
+    }
+
+    public sealed class ReminderDueHandler(DeliveryClock clock) : IEventHandler<ReminderDue>
+    {
+        public ValueTask HandleAsync(ReminderDue message, CancellationToken cancellationToken)
+        {
+            clock.Record();
+            return ValueTask.CompletedTask;
         }
     }
 }

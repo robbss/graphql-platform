@@ -9,46 +9,55 @@ public class NatsEndpointDescriptorTests
         => new(Mock.Of<IMessagingSetupContext>());
 
     [Fact]
-    public void Endpoint_Derives_A_Durable_Name_From_The_Endpoint_Name()
+    public void Endpoint_Should_DeriveADurableName_When_GivenAnEndpointName()
     {
+        // arrange
         var descriptor = CreateDescriptor();
 
+        // act
         descriptor.Endpoint("order-service.order-created");
 
-        var endpoint = Assert.Single(descriptor.CreateConfiguration().ReceiveEndpoints);
-        var natsEndpoint = Assert.IsType<NatsReceiveEndpointConfiguration>(endpoint);
+        // assert
+        var endpoint = Assert.IsType<NatsReceiveEndpointConfiguration>(
+            Assert.Single(descriptor.CreateConfiguration().ReceiveEndpoints));
 
-        Assert.Equal("order-service.order-created", natsEndpoint.Name);
-        Assert.Equal("order-service_order-created", natsEndpoint.ConsumerName);
+        Assert.Equal("order-service.order-created", endpoint.Name);
+        Assert.Equal("order-service_order-created", endpoint.ConsumerName);
     }
 
     [Fact]
-    public void Endpoint_Returns_The_Same_Declaration_For_A_Repeated_Name()
+    public void Endpoint_Should_ReturnTheSameDeclaration_When_TheNameRepeats()
     {
+        // arrange
         var descriptor = CreateDescriptor();
 
+        // act
         descriptor.Endpoint("orders").Subject("order-service.order-created");
         descriptor.Endpoint("orders").Subject("order-service.order-cancelled");
 
-        var endpoint = Assert.Single(descriptor.CreateConfiguration().ReceiveEndpoints);
-        var natsEndpoint = Assert.IsType<NatsReceiveEndpointConfiguration>(endpoint);
+        // assert
+        var endpoint = Assert.IsType<NatsReceiveEndpointConfiguration>(
+            Assert.Single(descriptor.CreateConfiguration().ReceiveEndpoints));
 
         Assert.Equal(
             ["order-service.order-created", "order-service.order-cancelled"],
-            natsEndpoint.FilterSubjects);
+            endpoint.FilterSubjects);
     }
 
     [Fact]
-    public void FromStream_Pins_The_Endpoint_To_A_Stream()
+    public void FromStream_Should_PinTheEndpointToAStream_When_Declared()
     {
+        // arrange
         var descriptor = CreateDescriptor();
 
+        // act
         descriptor.Endpoint("orders").FromStream("ORDER_SERVICE").ConsumerName("orders.worker");
 
-        var natsEndpoint = Assert.IsType<NatsReceiveEndpointConfiguration>(
+        // assert
+        var endpoint = Assert.IsType<NatsReceiveEndpointConfiguration>(
             Assert.Single(descriptor.CreateConfiguration().ReceiveEndpoints));
 
-        Assert.Equal("ORDER_SERVICE", natsEndpoint.StreamName);
-        Assert.Equal("orders_worker", natsEndpoint.ConsumerName);
+        Assert.Equal("ORDER_SERVICE", endpoint.StreamName);
+        Assert.Equal("orders_worker", endpoint.ConsumerName);
     }
 }

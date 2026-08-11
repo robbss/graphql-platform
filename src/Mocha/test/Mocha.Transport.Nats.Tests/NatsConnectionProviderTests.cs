@@ -9,20 +9,27 @@ public class NatsConnectionProviderTests
     [InlineData("nats://nats.internal:4333", "nats.internal", 4333)]
     [InlineData("localhost:4222", "localhost", 4222)]
     [InlineData("nats://localhost", "localhost", NatsConnectionProvider.DefaultPort)]
-    public void ParseFirstServer_Handles_The_Common_Url_Shapes(string url, string host, int port)
+    public void ParseFirstServer_Should_ReadHostAndPort_When_GivenACommonUrlShape(
+        string url,
+        string expectedHost,
+        int expectedPort)
     {
-        var (parsedHost, parsedPort) = NatsConnectionProvider.ParseFirstServer(url);
+        // act
+        var (host, port) = NatsConnectionProvider.ParseFirstServer(url);
 
-        Assert.Equal(host, parsedHost);
-        Assert.Equal(port, parsedPort);
+        // assert
+        Assert.Equal(expectedHost, host);
+        Assert.Equal(expectedPort, port);
     }
 
     [Fact]
-    public void ParseFirstServer_Uses_Only_The_First_Server_In_A_Cluster()
+    public void ParseFirstServer_Should_UseOnlyTheFirstEntry_When_GivenACluster()
     {
+        // act
         var (host, port) = NatsConnectionProvider.ParseFirstServer(
             "nats://first:4222, nats://second:4223, nats://third:4224");
 
+        // assert
         Assert.Equal("first", host);
         Assert.Equal(4222, port);
     }
@@ -30,8 +37,9 @@ public class NatsConnectionProviderTests
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public void ParseFirstServer_Rejects_Empty_Urls(string url)
+    public void ParseFirstServer_Should_Throw_When_TheUrlIsEmpty(string url)
     {
+        // act and assert
         Assert.Throws<ArgumentException>(() => NatsConnectionProvider.ParseFirstServer(url));
     }
 }

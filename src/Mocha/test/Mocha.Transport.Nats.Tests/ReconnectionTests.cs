@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Mocha.Transport.Nats.Tests.Fixtures;
@@ -9,27 +8,20 @@ namespace Mocha.Transport.Nats.Tests;
 
 public sealed record Heartbeat(int Sequence);
 
-public sealed class HeartbeatHandler : IEventHandler<Heartbeat>
-{
-    public static readonly ConcurrentBag<int> Handled = [];
-
-    public ValueTask HandleAsync(Heartbeat message, CancellationToken cancellationToken)
-    {
-        Handled.Add(message.Sequence);
-        return ValueTask.CompletedTask;
-    }
-}
-
 [Collection(JetStreamCollection.Name)]
 public class ReconnectionTests(JetStreamFixture fixture)
 {
-    [Fact]
-    public async Task Consumption_Resumes_After_The_Connection_Drops()
-    {
-        var cancellationToken = TestContext.Current.CancellationToken;
+    private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(60);
 
-        // A dedicated connection: this test deliberately resets it, and doing that to the shared
-        // fixture connection disturbs every other test's subscriptions.
+    [Fact]
+    public async Task ConsumeLoop_Should_ResumeReceiving_When_TheConnectionIsReset()
+    {
+        // arrange
+        // A dedicated connection, because this test deliberately resets it and doing that to the
+        // shared fixture connection disturbs every other test's subscriptions.
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var recorder = new MessageRecorder();
+
         await using var connection = new NatsConnection(new NatsOpts
         {
             Url = fixture.ConnectionString,
@@ -40,6 +32,7 @@ public class ReconnectionTests(JetStreamFixture fixture)
 
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton<INatsConnection>(connection);
+        builder.Services.AddSingleton(recorder);
         builder.Services
             .AddMessageBus()
             .AddEventHandler<HeartbeatHandler>()
@@ -53,8 +46,9 @@ public class ReconnectionTests(JetStreamFixture fixture)
             var bus = host.Services.GetRequiredService<IMessageBus>();
 
             await bus.PublishAsync(new Heartbeat(1), cancellationToken);
-            await WaitForAsync(1, cancellationToken);
+            Assert.True(await recorder.WaitAsync(s_timeout), "The first heartbeat never arrived.");
 
+            // act
             // NATS.Net owns reconnection, which is why this transport has no connection manager of
             // its own. Forcing a reconnect proves the consume loop survives it rather than silently
             // stopping and leaving the service alive but deaf.
@@ -62,10 +56,14 @@ public class ReconnectionTests(JetStreamFixture fixture)
 
             await bus.PublishAsync(new Heartbeat(2), cancellationToken);
 
-            var resumed = await WaitForAsync(2, cancellationToken);
+            // assert
+            Assert.True(
+                await recorder.WaitAsync(s_timeout),
+                "Consumption did not resume after the connection was reset.");
 
-            Assert.True(resumed, "Consumption did not resume after the connection was reset.");
-            Assert.Contains(2, HeartbeatHandler.Handled);
+            Assert.Equal(
+                [1, 2],
+                recorder.Messages.Cast<Heartbeat>().Select(h => h.Sequence).Order());
         }
         finally
         {
@@ -73,20 +71,12 @@ public class ReconnectionTests(JetStreamFixture fixture)
         }
     }
 
-    private static async Task<bool> WaitForAsync(int sequence, CancellationToken cancellationToken)
+    public sealed class HeartbeatHandler(MessageRecorder recorder) : IEventHandler<Heartbeat>
     {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
-
-        while (DateTimeOffset.UtcNow < deadline)
+        public ValueTask HandleAsync(Heartbeat message, CancellationToken cancellationToken)
         {
-            if (HeartbeatHandler.Handled.Contains(sequence))
-            {
-                return true;
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            recorder.Record(message);
+            return ValueTask.CompletedTask;
         }
-
-        return false;
     }
 }

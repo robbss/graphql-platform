@@ -9,60 +9,39 @@ public sealed record ProcessRefund(Guid RefundId, decimal Amount) : IEventReques
 
 public sealed record RefundProcessed(Guid RefundId, string Status);
 
-public sealed class ProcessRefundHandler : IEventRequestHandler<ProcessRefund, RefundProcessed>
-{
-    public static readonly TaskCompletionSource<ProcessRefund> Invoked =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
+public sealed record InspectRefund(Guid RefundId) : IEventRequest<RefundInspected>;
 
-    public ValueTask<RefundProcessed> HandleAsync(
-        ProcessRefund message,
-        CancellationToken cancellationToken)
-    {
-        Invoked.TrySetResult(message);
-
-        return ValueTask.FromResult(new RefundProcessed(message.RefundId, "refunded"));
-    }
-}
+public sealed record RefundInspected(Guid RefundId, string Status);
 
 [Collection(JetStreamCollection.Name)]
 public class RequestReplyTests(JetStreamFixture fixture)
 {
+    private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(30);
+
     [Fact]
-    public async Task A_Request_Round_Trips_Through_A_Core_Nats_Reply()
+    public async Task RequestAsync_Should_ReturnTheResponse_When_HandledOverACoreNatsReply()
     {
+        // arrange
         var cancellationToken = TestContext.Current.CancellationToken;
+        var recorder = new MessageRecorder();
+        var refundId = Guid.NewGuid();
 
-        var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton(fixture.Connection);
-        builder.Services
-            .AddMessageBus()
-            .AddRequestHandler<ProcessRefundHandler>()
-            .AddNats(nats => nats.ServiceName("e2e-refunds"));
-
-        using var host = builder.Build();
+        using var host = BuildHost<ProcessRefundHandler>("e2e-refund-roundtrip", recorder);
         await host.StartAsync(cancellationToken);
 
         try
         {
-            var refundId = Guid.NewGuid();
-
-            var request = host.Services
-                .GetRequiredService<IMessageBus>()
+            // act
+            var response = await host.Services.GetRequiredService<IMessageBus>()
                 .RequestAsync(new ProcessRefund(refundId, 49.99m), cancellationToken)
-                .AsTask();
+                .AsTask()
+                .WaitAsync(s_timeout, cancellationToken);
 
-            // Separated so a failure says which half broke: the request never reaching the handler,
-            // or the reply never getting back over the core subscription.
-            var handled = await ProcessRefundHandler.Invoked.Task.WaitAsync(
-                TimeSpan.FromSeconds(30),
-                cancellationToken);
-
-            Assert.Equal(refundId, handled.RefundId);
-
-            var response = await request.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-
-            Assert.Equal(refundId, response.RefundId);
-            Assert.Equal("refunded", response.Status);
+            // assert
+            // Separated from the response so a failure says which half broke: the request never
+            // reaching the handler, or the reply never getting back over the core subscription.
+            Assert.Equal(new ProcessRefund(refundId, 49.99m), Assert.Single(recorder.Messages));
+            Assert.Equal(new RefundProcessed(refundId, "refunded"), response);
         }
         finally
         {
@@ -71,18 +50,15 @@ public class RequestReplyTests(JetStreamFixture fixture)
     }
 
     [Fact]
-    public async Task The_Reply_Subject_Stays_Out_Of_The_Stream()
+    public async Task DiscoverTopology_Should_KeepReplySubjectsOutOfEveryStream_When_RequestHandlerRegistered()
     {
+        // arrange
+        // Reply inboxes are ephemeral. Capturing one in a stream would persist every response for
+        // the stream's whole retention period.
         var cancellationToken = TestContext.Current.CancellationToken;
+        var recorder = new MessageRecorder();
 
-        var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton(fixture.Connection);
-        builder.Services
-            .AddMessageBus()
-            .AddRequestHandler<ProcessRefundHandler>()
-            .AddNats(nats => nats.ServiceName("e2e-refunds"));
-
-        using var host = builder.Build();
+        using var host = BuildHost<InspectRefundHandler>("e2e-refund-topology", recorder);
         await host.StartAsync(cancellationToken);
 
         try
@@ -93,21 +69,61 @@ public class RequestReplyTests(JetStreamFixture fixture)
                 .Single()
                 .Topology;
 
+            // act
             var replySubjects = topology.Subjects.Where(s => s.IsCore).Select(s => s.Subject).ToList();
 
-            Assert.NotEmpty(replySubjects);
+            var captured = replySubjects
+                .Where(subject => topology.Streams.Any(stream => stream.Subjects.Contains(subject)))
+                .ToList();
 
-            // Reply inboxes are ephemeral. Capturing them in a stream would persist every response
-            // for the stream's whole retention period.
-            Assert.All(
-                replySubjects,
-                subject => Assert.DoesNotContain(
-                    topology.Streams,
-                    stream => stream.Subjects.Contains(subject)));
+            // assert
+            Assert.NotEmpty(replySubjects);
+            Assert.Equal([], captured);
         }
         finally
         {
             await host.StopAsync(cancellationToken);
+        }
+    }
+
+    private IHost BuildHost<THandler>(string serviceName, MessageRecorder recorder)
+        where THandler : class, IEventRequestHandler
+    {
+        var builder = Host.CreateApplicationBuilder();
+
+        builder.Services.AddSingleton(fixture.Connection);
+        builder.Services.AddSingleton(recorder);
+        builder.Services
+            .AddMessageBus()
+            .AddRequestHandler<THandler>()
+            .AddNats(nats => nats.ServiceName(serviceName));
+
+        return builder.Build();
+    }
+
+    public sealed class ProcessRefundHandler(MessageRecorder recorder)
+        : IEventRequestHandler<ProcessRefund, RefundProcessed>
+    {
+        public ValueTask<RefundProcessed> HandleAsync(
+            ProcessRefund message,
+            CancellationToken cancellationToken)
+        {
+            recorder.Record(message);
+
+            return ValueTask.FromResult(new RefundProcessed(message.RefundId, "refunded"));
+        }
+    }
+
+    public sealed class InspectRefundHandler(MessageRecorder recorder)
+        : IEventRequestHandler<InspectRefund, RefundInspected>
+    {
+        public ValueTask<RefundInspected> HandleAsync(
+            InspectRefund message,
+            CancellationToken cancellationToken)
+        {
+            recorder.Record(message);
+
+            return ValueTask.FromResult(new RefundInspected(message.RefundId, "inspected"));
         }
     }
 }

@@ -17,6 +17,14 @@ namespace Mocha.Transport.Nats.Tests.Fixtures;
 /// </remarks>
 public sealed class JetStreamOptions : ContainerResourceOptions, IComposableResourceOption
 {
+    /// <summary>
+    /// The lowest server version supporting everything the transport offers: per-message TTL landed
+    /// in 2.11 and message schedules in 2.12. Pinned to the floor rather than to a moving tag, so
+    /// the version-gated tests actually run and so a new dependency on a later server shows up as a
+    /// failure here rather than in production.
+    /// </summary>
+    public const string Image = "nats:2.12-alpine";
+
     /// <inheritdoc />
     public Type ResourceType => typeof(NatsResource<JetStreamOptions>);
 
@@ -25,7 +33,7 @@ public sealed class JetStreamOptions : ContainerResourceOptions, IComposableReso
     {
         builder
             .Name("nats-jetstream")
-            .Image("nats:latest")
+            .Image(Image)
             .AddCmd("-js", "-m", "8222")
             .AddVariable("nats-monitoring", VariableType.DynamicPort)
             .InternalPort(4222)

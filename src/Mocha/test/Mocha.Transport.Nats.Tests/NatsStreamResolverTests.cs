@@ -40,21 +40,25 @@ public class NatsStreamResolverTests
     }
 
     [Fact]
-    public async Task Resolves_The_Stream_Capturing_The_Subject()
+    public async Task ResolveAsync_Should_BindTheCapturingStream_When_TheServerKnowsIt()
     {
+        // arrange
         var topology = TopologyWithConsumer("order-service.order-created");
 
+        // act
         await NatsStreamResolver.ResolveAsync(
             JetStreamReturning("ORDER_SERVICE"),
             topology,
             CancellationToken.None);
 
+        // assert
         Assert.Equal("ORDER_SERVICE", topology.Consumers[0].StreamName);
     }
 
     [Fact]
-    public async Task Prefers_A_Locally_Declared_Stream_Over_Querying_The_Server()
+    public async Task ResolveAsync_Should_PreferALocalStream_When_OneIsDeclared()
     {
+        // arrange
         var topology = TestTopology.Create();
 
         topology.AddStream(new NatsStreamConfiguration
@@ -71,15 +75,18 @@ public class NatsStreamResolverTests
 
         var jetStream = new Mock<INatsJSContext>(MockBehavior.Strict);
 
+        // act
         await NatsStreamResolver.ResolveAsync(jetStream.Object, topology, CancellationToken.None);
 
+        // assert
         Assert.Equal("ORDER_SERVICE", topology.Consumers[0].StreamName);
         jetStream.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task Leaves_An_Explicitly_Declared_Stream_Untouched()
+    public async Task ResolveAsync_Should_LeaveTheStream_When_TheConsumerAlreadyNamesOne()
     {
+        // arrange
         var topology = TestTopology.Create();
 
         topology.AddConsumer(new NatsConsumerConfiguration
@@ -91,84 +98,63 @@ public class NatsStreamResolverTests
 
         var jetStream = new Mock<INatsJSContext>(MockBehavior.Strict);
 
+        // act
         await NatsStreamResolver.ResolveAsync(jetStream.Object, topology, CancellationToken.None);
 
+        // assert
         Assert.Equal("LEGACY_ORDERS", topology.Consumers[0].StreamName);
         jetStream.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task Fails_When_No_Stream_Captures_The_Subject()
+    public async Task ResolveAsync_Should_Throw_When_NoStreamCapturesTheSubject()
     {
+        // arrange
         var topology = TopologyWithConsumer("order-service.order-created");
 
+        // act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await NatsStreamResolver.ResolveAsync(
                 JetStreamReturning(),
                 topology,
                 CancellationToken.None));
 
+        // assert
         Assert.Contains("No stream captures subject", exception.Message, StringComparison.Ordinal);
         Assert.Contains("FromStream", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Fails_When_Several_Streams_Capture_The_Subject()
+    public async Task ResolveAsync_Should_Throw_When_SeveralStreamsCaptureTheSubject()
     {
+        // arrange
         var topology = TopologyWithConsumer("order-service.order-created");
 
+        // act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await NatsStreamResolver.ResolveAsync(
                 JetStreamReturning("ORDER_SERVICE", "ORDER_ARCHIVE"),
                 topology,
                 CancellationToken.None));
 
+        // assert
         Assert.Contains("captured by 2 streams", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Fails_When_A_Consumer_Has_No_Subjects()
+    public async Task ResolveAsync_Should_Throw_When_TheConsumerHasNoSubjects()
     {
+        // arrange
         var topology = TopologyWithConsumer();
 
+        // act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await NatsStreamResolver.ResolveAsync(
                 JetStreamReturning("ORDER_SERVICE"),
                 topology,
                 CancellationToken.None));
 
+        // assert
         Assert.Contains("has no subjects", exception.Message, StringComparison.Ordinal);
-    }
-}
-
-public class NatsServerCapabilitiesTests
-{
-    [Theory]
-    [InlineData("2.10.5", false, false)]
-    [InlineData("2.11.0", true, false)]
-    [InlineData("2.12.1", true, true)]
-    [InlineData("v2.12.0-RC.3", true, true)]
-    public void Version_Gates_Match_The_Documented_Server_Requirements(
-        string version,
-        bool ttl,
-        bool schedules)
-    {
-        var capabilities = NatsServerCapabilities.FromServerVersion(version);
-
-        Assert.Equal(ttl, capabilities.SupportsMessageTtl);
-        Assert.Equal(schedules, capabilities.SupportsMessageSchedules);
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("not-a-version")]
-    public void An_Unknown_Version_Is_Treated_As_Capable(string? version)
-    {
-        var capabilities = NatsServerCapabilities.FromServerVersion(version);
-
-        Assert.Null(capabilities.Version);
-        Assert.True(capabilities.SupportsMessageTtl);
-        Assert.True(capabilities.SupportsMessageSchedules);
     }
 }

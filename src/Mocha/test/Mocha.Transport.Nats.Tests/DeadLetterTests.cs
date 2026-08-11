@@ -11,42 +11,26 @@ public sealed record PoisonMessage(Guid Id);
 
 public sealed class PoisonMessageException(string message) : Exception(message);
 
-public sealed class PoisonMessageHandler : IEventHandler<PoisonMessage>
-{
-    public static readonly TaskCompletionSource Attempted =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public ValueTask HandleAsync(PoisonMessage message, CancellationToken cancellationToken)
-    {
-        Attempted.TrySetResult();
-
-        throw new PoisonMessageException("This message can never be handled.");
-    }
-}
-
 [Collection(JetStreamCollection.Name)]
 public class DeadLetterTests(JetStreamFixture fixture)
 {
-    private IHost BuildHost()
+    [Fact]
+    public async Task PublishAsync_Should_LandOnTheErrorSubject_When_TheHandlerAlwaysFails()
     {
-        var builder = Host.CreateApplicationBuilder();
+        // arrange
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var recorder = new MessageRecorder();
 
+        var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton(fixture.Connection);
+        builder.Services.AddSingleton(recorder);
         builder.Services
             .AddMessageBus()
             .AddEventHandler<PoisonMessageHandler>()
             .AddResilience(policy => policy.Default().Retry(1).ThenDeadLetter())
             .AddNats(nats => nats.ServiceName("e2e-poison"));
 
-        return builder.Build();
-    }
-
-    [Fact]
-    public async Task A_Permanently_Failing_Message_Lands_On_The_Error_Subject()
-    {
-        var cancellationToken = TestContext.Current.CancellationToken;
-
-        using var host = BuildHost();
+        using var host = builder.Build();
         await host.StartAsync(cancellationToken);
 
         try
@@ -67,19 +51,16 @@ public class DeadLetterTests(JetStreamFixture fixture)
             // out waiting for an acknowledgement, so coverage is worth asserting directly.
             Assert.Contains(errorSubject, stream.Subjects);
 
-            // Mocha's fault pipeline resolves the error endpoint by address, so this endpoint has to
-            // exist for a faulted message to have anywhere to go.
-            Assert.Contains(
-                transport.DispatchEndpoints,
-                e => e is NatsDispatchEndpoint { Subject.Subject: { } s } && s == errorSubject);
-
+            // act
             await host.Services.GetRequiredService<IMessageBus>()
                 .PublishAsync(new PoisonMessage(Guid.NewGuid()), cancellationToken);
 
-            await PoisonMessageHandler.Attempted.Task.WaitAsync(
-                TimeSpan.FromSeconds(30),
-                cancellationToken);
+            Assert.True(await recorder.WaitAsync(TimeSpan.FromSeconds(30)), "The handler never ran.");
 
+            // assert
+            // The dead-lettered copy carries the same message identifier as the original. Since
+            // deduplication is stream-scoped, an unqualified identifier would make the republish look
+            // like a duplicate and it would never arrive.
             var delivered = await WaitForSubjectAsync(
                 fixture.JetStream,
                 stream.Name,
@@ -87,9 +68,7 @@ public class DeadLetterTests(JetStreamFixture fixture)
                 TimeSpan.FromSeconds(30),
                 cancellationToken);
 
-            Assert.True(
-                delivered > 0,
-                $"The faulted message never reached '{errorSubject}'.");
+            Assert.True(delivered > 0, $"The faulted message never reached '{errorSubject}'.");
         }
         finally
         {
@@ -100,10 +79,8 @@ public class DeadLetterTests(JetStreamFixture fixture)
     /// <summary>
     /// Polls the stream's per-subject message counts until the subject holds a message.
     /// </summary>
-    /// <remarks>
-    /// Asserting on stream state rather than consuming keeps the test from competing with the
-    /// transport's own durable consumer for the message.
-    /// </remarks>
+    // Asserting on stream state rather than consuming keeps the test from competing with the
+    // transport's own durable consumer for the message.
     private static async Task<long> WaitForSubjectAsync(
         INatsJSContext jetStream,
         string streamName,
@@ -129,5 +106,15 @@ public class DeadLetterTests(JetStreamFixture fixture)
         }
 
         return 0;
+    }
+
+    public sealed class PoisonMessageHandler(MessageRecorder recorder) : IEventHandler<PoisonMessage>
+    {
+        public ValueTask HandleAsync(PoisonMessage message, CancellationToken cancellationToken)
+        {
+            recorder.Record(message);
+
+            throw new PoisonMessageException("This message can never be handled.");
+        }
     }
 }

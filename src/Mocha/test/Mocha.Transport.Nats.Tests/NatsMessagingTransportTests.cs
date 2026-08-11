@@ -5,21 +5,17 @@ namespace Mocha.Transport.Nats.Tests;
 public class NatsMessagingTransportTests
 {
     [Fact]
-    public void Transport_Derives_From_MessagingTransport()
+    public void Constructor_Should_NotRunTheConfigureDelegate_When_TheTransportIsCreated()
     {
-        var transport = new NatsMessagingTransport(static _ => { });
-
-        Assert.IsAssignableFrom<MessagingTransport>(transport);
-    }
-
-    [Fact]
-    public void Configuration_Delegate_Is_Applied()
-    {
+        // arrange
+        // The delegate runs when the bus initializes the transport, not when it is constructed,
+        // because it needs the setup context to build a descriptor against.
         var applied = false;
 
-        var transport = new NatsMessagingTransport(_ => applied = true);
+        // act
+        _ = new NatsMessagingTransport(_ => applied = true);
 
-        Assert.NotNull(transport);
-        Assert.False(applied, "The delegate must not run before the bus initializes the transport.");
+        // assert
+        Assert.False(applied);
     }
 }

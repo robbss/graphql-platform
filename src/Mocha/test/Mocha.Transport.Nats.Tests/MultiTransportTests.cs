@@ -8,28 +8,22 @@ namespace Mocha.Transport.Nats.Tests;
 
 public sealed record RoutedEvent(Guid Id);
 
-public sealed class RoutedEventHandler : IEventHandler<RoutedEvent>
-{
-    public static readonly TaskCompletionSource<Guid> Received =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public ValueTask HandleAsync(RoutedEvent message, CancellationToken cancellationToken)
-    {
-        Received.TrySetResult(message.Id);
-        return ValueTask.CompletedTask;
-    }
-}
+public sealed record ClaimedEvent(Guid Id);
 
 [Collection(JetStreamCollection.Name)]
 public class MultiTransportTests(JetStreamFixture fixture)
 {
     [Fact]
-    public async Task Nats_Still_Routes_When_Registered_Alongside_InMemory()
+    public async Task PublishAsync_Should_RouteThroughNats_When_RegisteredAlongsideInMemory()
     {
+        // arrange
         var cancellationToken = TestContext.Current.CancellationToken;
+        var recorder = new MessageRecorder();
+        var published = new RoutedEvent(Guid.NewGuid());
 
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton(fixture.Connection);
+        builder.Services.AddSingleton(recorder);
         builder.Services
             .AddMessageBus()
             .AddEventHandler<RoutedEventHandler>()
@@ -41,26 +35,19 @@ public class MultiTransportTests(JetStreamFixture fixture)
 
         try
         {
-            var transports = host.Services.GetRequiredService<IMessagingRuntime>()
-                .Transports.ToList();
+            var nats = host.Services.GetRequiredService<IMessagingRuntime>()
+                .Transports.OfType<NatsMessagingTransport>()
+                .Single();
 
-            Assert.Equal(2, transports.Count);
-
-            var nats = transports.OfType<NatsMessagingTransport>().Single();
-
-            Assert.True(nats.IsDefaultTransport);
-
-            var published = Guid.NewGuid();
-
+            // act
             await host.Services.GetRequiredService<IMessageBus>()
-                .PublishAsync(new RoutedEvent(published), cancellationToken);
+                .PublishAsync(published, cancellationToken);
 
-            var received = await RoutedEventHandler.Received.Task.WaitAsync(
-                TimeSpan.FromSeconds(30),
-                cancellationToken);
+            Assert.True(
+                await recorder.WaitAsync(TimeSpan.FromSeconds(30)),
+                "The handler did not receive the event.");
 
-            Assert.Equal(published, received);
-
+            // assert
             // The default transport should own the route, so the message must have gone through
             // JetStream rather than quietly falling back to the in-process transport.
             var stream = Assert.Single(((NatsMessagingTopology)nats.Topology).Streams);
@@ -69,9 +56,8 @@ public class MultiTransportTests(JetStreamFixture fixture)
                 stream.Name,
                 cancellationToken: cancellationToken);
 
-            Assert.True(
-                info.Info.State.Messages > 0,
-                "The message did not reach the NATS stream, so it was routed elsewhere.");
+            Assert.Equal(published, Assert.Single(recorder.Messages));
+            Assert.True(info.Info.State.Messages > 0, "The event never reached the NATS stream.");
         }
         finally
         {
@@ -80,8 +66,12 @@ public class MultiTransportTests(JetStreamFixture fixture)
     }
 
     [Fact]
-    public async Task Registration_Order_Decides_Which_Transport_Claims_Handlers()
+    public async Task IsDefaultTransport_Should_NotClaimHandlers_When_AnotherTransportIsRegisteredFirst()
     {
+        // arrange
+        // IsDefaultTransport only picks the fallback for an unrouted address. Convention-bound
+        // handlers are claimed by whichever transport discovers them first, which is the one
+        // registered first, so registering NATS last leaves it with nothing to publish and no stream.
         var cancellationToken = TestContext.Current.CancellationToken;
 
         var builder = Host.CreateApplicationBuilder();
@@ -97,15 +87,13 @@ public class MultiTransportTests(JetStreamFixture fixture)
 
         try
         {
+            // act
             var nats = host.Services
                 .GetRequiredService<IMessagingRuntime>()
                 .Transports.OfType<NatsMessagingTransport>()
                 .Single();
 
-            // IsDefaultTransport only picks the fallback for an unrouted address. Convention-bound
-            // handlers are claimed by whichever transport discovers them first, which is the one
-            // registered first. Registering NATS after InMemory therefore leaves it with nothing to
-            // publish, and no stream, even though it is marked as the default.
+            // assert
             Assert.True(nats.IsDefaultTransport);
             Assert.Empty(((NatsMessagingTopology)nats.Topology).Streams);
         }
@@ -114,12 +102,19 @@ public class MultiTransportTests(JetStreamFixture fixture)
             await host.StopAsync(cancellationToken);
         }
     }
-}
 
-public sealed record ClaimedEvent(Guid Id);
+    public sealed class RoutedEventHandler(MessageRecorder recorder) : IEventHandler<RoutedEvent>
+    {
+        public ValueTask HandleAsync(RoutedEvent message, CancellationToken cancellationToken)
+        {
+            recorder.Record(message);
+            return ValueTask.CompletedTask;
+        }
+    }
 
-public sealed class ClaimedEventHandler : IEventHandler<ClaimedEvent>
-{
-    public ValueTask HandleAsync(ClaimedEvent message, CancellationToken cancellationToken)
-        => ValueTask.CompletedTask;
+    public sealed class ClaimedEventHandler : IEventHandler<ClaimedEvent>
+    {
+        public ValueTask HandleAsync(ClaimedEvent message, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+    }
 }

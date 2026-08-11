@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using System.Text;
+using CookieCrumble;
 using Mocha.Middlewares;
+using Mocha.Transport.Nats.Tests.Helpers;
 using Xunit;
 
 namespace Mocha.Transport.Nats.Tests;
@@ -11,6 +13,10 @@ public class NatsMessageEnvelopeTests
     {
         var headers = new Headers();
         headers.Set("x-tenant", "acme");
+
+        // A repeated header, which is what an inbound message with several values under one key
+        // parses back into. Included here so the round trip covers republishing one.
+        headers.Set("x-forwarded-for", new[] { "10.0.0.1", "10.0.0.2" });
 
         return new MessageEnvelope
         {
@@ -34,37 +40,32 @@ public class NatsMessageEnvelopeTests
     }
 
     [Fact]
-    public void Envelope_Round_Trips_Through_Nats_Headers()
+    public void Write_Should_RoundTripEveryField_When_ParsedBack()
     {
+        // arrange
         var envelope = CreateEnvelope();
 
+        // act
         var headers = NatsMessageHeadersWriter.Instance.Write(envelope);
         var parsed = NatsMessageEnvelopeParser.Instance.Parse(headers, envelope.Body, deliveryCount: 1);
 
-        Assert.Equal(envelope.MessageId, parsed.MessageId);
-        Assert.Equal(envelope.CorrelationId, parsed.CorrelationId);
-        Assert.Equal(envelope.ConversationId, parsed.ConversationId);
-        Assert.Equal(envelope.CausationId, parsed.CausationId);
-        Assert.Equal(envelope.SourceAddress, parsed.SourceAddress);
-        Assert.Equal(envelope.DestinationAddress, parsed.DestinationAddress);
-        Assert.Equal(envelope.ResponseAddress, parsed.ResponseAddress);
-        Assert.Equal(envelope.FaultAddress, parsed.FaultAddress);
-        Assert.Equal(envelope.MessageType, parsed.MessageType);
-        Assert.Equal(envelope.ContentType, parsed.ContentType);
-        Assert.Equal(envelope.SentAt, parsed.SentAt);
-        Assert.Equal(envelope.DeliverBy, parsed.DeliverBy);
-        Assert.Equal(envelope.ScheduledTime, parsed.ScheduledTime);
-        Assert.Equal(envelope.EnclosedMessageTypes, parsed.EnclosedMessageTypes);
-        Assert.Equal(envelope.Body.ToArray(), parsed.Body.ToArray());
+        // assert
+        new Snapshot()
+            .Add(NatsEnvelopeSnapshot.Create(headers), "Headers", MarkdownLanguages.Json)
+            .Add(NatsEnvelopeSnapshot.Create(parsed), "ParsedEnvelope", MarkdownLanguages.Json)
+            .MatchMarkdown();
     }
 
     [Fact]
-    public void MessageId_Travels_Separately_From_The_Dedup_Key()
+    public void Write_Should_KeepTheMessageIdSeparate_From_TheDeduplicationKey()
     {
+        // arrange
         var envelope = CreateEnvelope();
 
+        // act
         var headers = NatsMessageHeadersWriter.Instance.Write(envelope);
 
+        // assert
         Assert.True(headers.TryGetLastValue(NatsMessageHeaders.MessageId, out var messageId));
         Assert.Equal(envelope.MessageId, messageId);
 
@@ -75,24 +76,30 @@ public class NatsMessageEnvelopeTests
     }
 
     [Fact]
-    public void DeliveryCount_Comes_From_Metadata_Not_Headers()
+    public void Parse_Should_TakeTheDeliveryCountFromMetadata_When_ParsingAMessage()
     {
+        // arrange
         var envelope = CreateEnvelope();
 
+        // act
         var headers = NatsMessageHeadersWriter.Instance.Write(envelope);
         var parsed = NatsMessageEnvelopeParser.Instance.Parse(headers, envelope.Body, deliveryCount: 3);
 
+        // assert
         Assert.Equal(3, parsed.DeliveryCount);
     }
 
     [Fact]
-    public void User_Headers_Round_Trip_Without_Transport_Keys()
+    public void Parse_Should_ExcludeTransportKeys_When_RebuildingUserHeaders()
     {
+        // arrange
         var envelope = CreateEnvelope();
 
+        // act
         var headers = NatsMessageHeadersWriter.Instance.Write(envelope);
         var parsed = NatsMessageEnvelopeParser.Instance.Parse(headers, envelope.Body, deliveryCount: 0);
 
+        // assert
         var parsedHeaders = Assert.IsType<Headers>(parsed.Headers);
 
         Assert.Equal("acme", parsedHeaders.GetValue("x-tenant"));
@@ -101,13 +108,16 @@ public class NatsMessageEnvelopeTests
     }
 
     [Fact]
-    public void Absent_Optional_Fields_Stay_Null()
+    public void Parse_Should_LeaveOptionalFieldsNull_When_TheHeadersAreAbsent()
     {
+        // arrange
         var envelope = new MessageEnvelope { Body = Encoding.UTF8.GetBytes("{}") };
 
+        // act
         var headers = NatsMessageHeadersWriter.Instance.Write(envelope);
         var parsed = NatsMessageEnvelopeParser.Instance.Parse(headers, envelope.Body, deliveryCount: 0);
 
+        // assert
         Assert.Null(parsed.MessageId);
         Assert.Null(parsed.CorrelationId);
         Assert.Null(parsed.SentAt);
@@ -116,8 +126,11 @@ public class NatsMessageEnvelopeTests
     }
 
     [Fact]
-    public void Multi_Line_Header_Values_Are_Flattened()
+    public void Write_Should_FlattenLineBreaks_When_AValueSpansLines()
     {
+        // arrange
+        // Mocha's fault middleware puts a stack trace in a header, and NATS rejects a value
+        // containing a line break.
         var headers = new Headers();
         headers.Set("fault-stack-trace", "at Handler.HandleAsync()\r\n   at Pipeline.InvokeAsync()");
 
@@ -127,22 +140,78 @@ public class NatsMessageEnvelopeTests
             Body = Encoding.UTF8.GetBytes("{}")
         };
 
+        // act
         var written = NatsMessageHeadersWriter.Instance.Write(envelope);
 
+        // assert
         Assert.True(written.TryGetLastValue("fault-stack-trace", out var value));
-        Assert.DoesNotContain('\r', value!);
-        Assert.DoesNotContain('\n', value!);
-        Assert.Contains("at Handler.HandleAsync()", value, StringComparison.Ordinal);
+        Assert.Equal("at Handler.HandleAsync()     at Pipeline.InvokeAsync()", value);
     }
 
     [Fact]
-    public void Each_Write_Returns_A_Fresh_Header_Instance()
+    public void Write_Should_PreserveEveryValue_When_AHeaderIsRepeated()
     {
+        // arrange
+        var headers = new Headers();
+        headers.Set("x-forwarded-for", new[] { "10.0.0.1", "10.0.0.2" });
+
+        var envelope = new MessageEnvelope
+        {
+            Headers = headers,
+            Body = Encoding.UTF8.GetBytes("{}")
+        };
+
+        // act
+        var written = NatsMessageHeadersWriter.Instance.Write(envelope);
+
+        // assert
+        var values = written["x-forwarded-for"].Select(static v => v!).ToList();
+
+        Assert.Equal(new List<string> { "10.0.0.1", "10.0.0.2" }, values);
+    }
+
+    [Theory]
+    [InlineData("bad:key")]
+    [InlineData("bad\r\nkey")]
+    [InlineData("bad key")]
+    public void Write_Should_Throw_When_AHeaderKeyWouldCorruptFraming(string key)
+    {
+        // arrange
+        // NATS.Net does not validate keys, so an unchecked key here desynchronises the header block
+        // for everything else on the connection.
+        var headers = new Headers();
+        headers.Set(key, "value");
+
+        var envelope = new MessageEnvelope
+        {
+            Headers = headers,
+            Body = Encoding.UTF8.GetBytes("{}")
+        };
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => NatsMessageHeadersWriter.Instance.Write(envelope));
+
+        // assert
+        Assert.Equal(
+            $"Header '{key}' cannot be sent over NATS. Header keys cannot contain ':', whitespace "
+            + "or control characters.",
+            exception.Message);
+    }
+
+    [Fact]
+    public void Write_Should_ReturnAFreshInstance_When_CalledRepeatedly()
+    {
+        // arrange
         var envelope = CreateEnvelope();
 
+        // act
+        // NATS.Net 3.0 no longer makes headers read-only after publishing, so sharing one instance
+        // across concurrent publishes would be unsafe.
         var first = NatsMessageHeadersWriter.Instance.Write(envelope);
         var second = NatsMessageHeadersWriter.Instance.Write(envelope);
 
+        // assert
         Assert.NotSame(first, second);
     }
 }

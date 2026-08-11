@@ -8,25 +8,20 @@ namespace Mocha.Transport.Nats.Tests;
 
 public sealed record TracedEvent(Guid Id);
 
-public sealed class TracedEventHandler : IEventHandler<TracedEvent>
-{
-    public static readonly TaskCompletionSource Received =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public ValueTask HandleAsync(TracedEvent message, CancellationToken cancellationToken)
-    {
-        Received.TrySetResult();
-        return ValueTask.CompletedTask;
-    }
-}
-
 [Collection(JetStreamCollection.Name)]
 public class OpenTelemetryTests(JetStreamFixture fixture)
 {
     [Fact]
-    public async Task Only_The_Nats_Client_Emits_Spans()
+    public async Task PublishAsync_Should_EmitOnlyNatsClientSpans_When_AnEventIsHandled()
     {
+        // arrange
+        // The NATS client ships an always-registered "NATS.Net" ActivitySource, and Mocha emits no
+        // spans of its own here, so the double instrumentation this transport was designed to avoid
+        // does not occur. Asserted rather than assumed: if a later Mocha version starts tracing, this
+        // fails and the ownership question gets answered deliberately instead of shipping duplicate
+        // spans around every message.
         var cancellationToken = TestContext.Current.CancellationToken;
+        var recorder = new MessageRecorder();
         var activities = new List<Activity>();
 
         using var listener = new ActivityListener
@@ -40,6 +35,7 @@ public class OpenTelemetryTests(JetStreamFixture fixture)
 
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton(fixture.Connection);
+        builder.Services.AddSingleton(recorder);
         builder.Services
             .AddMessageBus()
             .AddEventHandler<TracedEventHandler>()
@@ -50,29 +46,37 @@ public class OpenTelemetryTests(JetStreamFixture fixture)
 
         try
         {
+            // act
             await host.Services.GetRequiredService<IMessageBus>()
                 .PublishAsync(new TracedEvent(Guid.NewGuid()), cancellationToken);
 
-            await TracedEventHandler.Received.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            Assert.True(
+                await recorder.WaitAsync(TimeSpan.FromSeconds(30)),
+                "The handler did not receive the event.");
         }
         finally
         {
             await host.StopAsync(cancellationToken);
         }
 
-        var sources = activities
+        // assert
+        var mochaSources = activities
             .Select(a => a.Source.Name)
+            .Where(name => name.Contains("Mocha", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
             .ToList();
 
-        // The NATS client ships an always-registered "NATS.Net" ActivitySource, so its spans appear
-        // for anything subscribing to every source the way this test does.
-        Assert.Contains(sources, name => name.Equals("NATS.Net", StringComparison.Ordinal));
+        Assert.Contains("NATS.Net", activities.Select(a => a.Source.Name));
+        Assert.Equal([], mochaSources);
+    }
 
-        // Mocha emits no spans of its own in this configuration, so the double instrumentation this
-        // transport was designed to avoid does not currently occur. Asserted rather than assumed:
-        // if a later Mocha version starts tracing, this fails and the ownership question has to be
-        // answered deliberately instead of shipping duplicate spans around every message.
-        Assert.DoesNotContain(sources, name => name.Contains("Mocha", StringComparison.OrdinalIgnoreCase));
+    public sealed class TracedEventHandler(MessageRecorder recorder) : IEventHandler<TracedEvent>
+    {
+        public ValueTask HandleAsync(TracedEvent message, CancellationToken cancellationToken)
+        {
+            recorder.Record(message);
+            return ValueTask.CompletedTask;
+        }
     }
 }
