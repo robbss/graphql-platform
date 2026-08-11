@@ -14,6 +14,7 @@ Mocha ships with three transports:
 | **InMemory**   | `Mocha.Transport.InMemory` | Development, testing, single-process scenarios               |
 | **PostgreSQL** | `Mocha.Transport.Postgres` | Database-backed messaging when you already operate Postgres  |
 | **RabbitMQ**   | `Mocha.Transport.RabbitMQ` | Production, distributed systems, multi-service architectures |
+| **NATS**       | `Mocha.Transport.Nats`     | Production messaging on NATS JetStream                       |
 
 # Add a transport
 

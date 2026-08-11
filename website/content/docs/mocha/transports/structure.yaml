@@ -8,3 +8,5 @@ items:
     title: RabbitMQ
   - path: postgres
     title: PostgreSQL
+  - path: nats
+    title: NATS
