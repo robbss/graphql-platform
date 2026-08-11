@@ -1,13 +1,13 @@
 ---
 title: "Transports"
-description: "Understand how transports move messages in Mocha, how the transport abstraction works, and how to choose between InMemory, PostgreSQL, and RabbitMQ."
+description: "Understand how transports move messages in Mocha, how the transport abstraction works, and how to choose between InMemory, PostgreSQL, RabbitMQ, and NATS."
 ---
 
 A transport is the infrastructure layer that connects Mocha to a message broker. It manages connections, provisions topology (exchanges, queues, bindings), and handles the low-level details of dispatching and receiving messages. You write handlers and publish messages. The transport handles the rest.
 
-The transport abstraction means your handlers, patterns, and pipeline are identical regardless of which broker you use. Only the infrastructure changes. Swap `.AddInMemory()` for `.AddPostgres()` or `.AddRabbitMQ()` and your application code stays unchanged. This portability is the core value of the [Message Channel](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageChannel.html) pattern: the sender and receiver are decoupled from the physical infrastructure that carries the message.
+The transport abstraction means your handlers, patterns, and pipeline are identical regardless of which broker you use. Only the infrastructure changes. Swap `.AddInMemory()` for `.AddPostgres()`, `.AddRabbitMQ()` or `.AddNats()` and your application code stays unchanged. This portability is the core value of the [Message Channel](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageChannel.html) pattern: the sender and receiver are decoupled from the physical infrastructure that carries the message.
 
-Mocha ships with three transports:
+Mocha ships with four transports:
 
 | Transport      | Package                    | Use case                                                     |
 | -------------- | -------------------------- | ------------------------------------------------------------ |
