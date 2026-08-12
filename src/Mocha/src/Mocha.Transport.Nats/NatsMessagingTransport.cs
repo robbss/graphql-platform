@@ -308,16 +308,61 @@ public sealed class NatsMessagingTransport : MessagingTransport
             {
                 // Another service claimed these subjects between the check and the create. Yielding
                 // rather than failing start-up: the subjects resolve to the stream that won, which
-                // is the same outcome as having lost the race by a second.
+                // is the same outcome as having lost the race by a second. Only ever done for a
+                // convention stream, because discarding one the caller declared by name would turn
+                // a configuration error into a publish failure much later.
                 _logger.YieldedConventionStream(stream.Name, exception.Error.Description);
 
                 _topology.RemoveStream(stream);
+            }
+            catch (NatsJSApiException exception) when (IsSubjectOverlap(exception))
+            {
+                throw new InvalidOperationException(
+                    await DescribeSubjectConflictAsync(stream, exception, cancellationToken),
+                    exception);
             }
         }
     }
 
     private static bool IsSubjectOverlap(NatsJSApiException exception)
         => exception.Error.ErrCode == SubjectOverlapErrorCode;
+
+    /// <summary>
+    /// Builds a message naming which of a declared stream's subjects are already owned elsewhere, and
+    /// by which stream.
+    /// </summary>
+    /// <param name="stream">The stream that could not be provisioned.</param>
+    /// <param name="exception">The overlap error the server returned.</param>
+    /// <param name="cancellationToken">A token to cancel the lookup.</param>
+    /// <returns>The message.</returns>
+    private async ValueTask<string> DescribeSubjectConflictAsync(
+        NatsStream stream,
+        NatsJSApiException exception,
+        CancellationToken cancellationToken)
+    {
+        var conflicts = new List<string>();
+
+        foreach (var subject in stream.Subjects)
+        {
+            await foreach (var owner in JetStream.ListStreamNamesAsync(subject, cancellationToken))
+            {
+                if (!string.Equals(owner, stream.Name, StringComparison.Ordinal))
+                {
+                    conflicts.Add($"'{subject}' is already captured by stream '{owner}'");
+                }
+            }
+        }
+
+        var detail = conflicts.Count > 0
+            ? string.Join("; ", conflicts)
+            : exception.Error.Description ?? "the server reported overlapping subjects";
+
+        return $"Stream '{stream.Name}' cannot be provisioned because its subjects overlap a stream "
+            + $"that already exists: {detail}. JetStream requires every stream's subjects to be "
+            + "disjoint. Either remove the overlapping subject from this declaration, delete the "
+            + "stream that owns it, or drop the declaration and let the transport bind to the "
+            + "existing stream.";
+    }
 
     private async ValueTask ProvisionConsumersAsync(CancellationToken cancellationToken)
     {

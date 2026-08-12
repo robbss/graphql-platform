@@ -157,6 +157,38 @@ Because a convention stream is shared, this also means:
 > [!WARNING]
 > Deriving stream names from the service name means `order-service` and `order.service` both produce `ORDER_SERVICE`. Two services whose names differ only by a separator will share a stream by accident rather than by subject ownership.
 
+## Declaring a stream under the derived name
+
+Declaring a stream named the same as the one the service name derives is the common case, and the two are folded together: the subjects the convention stream would have claimed are added to the declaration, while the retention, storage and limits you declared are kept. Handlers you did not put on a named endpoint still get their subjects captured.
+
+A declared stream is never silently discarded. If any of its subjects are already owned by another stream, start-up fails naming both the subject and the owning stream, because JetStream requires stream subjects to be disjoint:
+
+```
+Stream 'ORDER_SERVICE' cannot be provisioned because its subjects overlap a stream
+that already exists: 'orders_error' is already captured by stream 'ORDER_FAULTS'.
+```
+
+Resolve it by removing the overlapping subject from the declaration, deleting the stream that owns it, or dropping the declaration and letting the transport bind to the existing stream.
+
+# Handling a family of messages on one endpoint
+
+A handler bound to an interface or base type does not receive its implementations by default. A publish resolves its subject from the **concrete runtime type**, so `PublishAsync<IOrderCommand>(command)` and `PublishAsync(command)` behave identically: both go to the concrete type's subject. The generic argument does not select the subject.
+
+To funnel a family onto one endpoint, name the concrete subjects:
+
+```csharp
+nats.Endpoint("order-commands")
+    .Handler<OrderCommandHandler>()          // IEventHandler<IOrderCommand>
+    .Subject("contracts.orders.cancel-order")
+    .Subject("contracts.orders.hold-order")
+    // Ordered delivery comes from the single durable; ordered handling needs this.
+    .MaxConcurrency(1);
+```
+
+Every implementation needs its own `Subject` call. They cannot be discovered automatically, because message types are completed after topology is discovered, so their base types are not yet known when subject filters are built.
+
+The handler still receives each message typed as the interface: the envelope carries its enclosed types, and the receive pipeline selects the handler from those. Because one durable on one stream delivers in order, this is also the only arrangement that orders a whole family relative to itself, which several consumers cannot do.
+
 # Which stream does a consumer read from?
 
 A JetStream consumer must be created on the stream that captures its subject, and that stream may belong to another service entirely. RabbitMQ has no equivalent constraint: a subscriber declares a queue and binds it to an exchange without knowing anything else about the publisher.

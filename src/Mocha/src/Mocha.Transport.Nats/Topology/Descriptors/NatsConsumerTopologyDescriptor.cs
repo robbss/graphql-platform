@@ -12,7 +12,12 @@ public sealed class NatsConsumerTopologyDescriptor
     private NatsConsumerTopologyDescriptor(IMessagingConfigurationContext context, string name)
         : base(context)
     {
-        Configuration = new NatsConsumerConfiguration { Name = name, FilterSubjects = [] };
+        Configuration = new NatsConsumerConfiguration
+        {
+            Name = name,
+            FilterSubjects = [],
+            Origin = TopologyOrigin.Declared
+        };
     }
 
     /// <inheritdoc />

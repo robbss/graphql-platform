@@ -236,6 +236,12 @@ public sealed class NatsRoutingStrategy : RoutingStrategy<NatsMessagingTransport
             // Deliberately independent of the route kind. The kind records how the handler was
             // registered, not how a sender dispatches, so deriving the subject from it would filter
             // the wrong one whenever an event handler is sent to, or a request handler published to.
+            //
+            // Note this is the route's own message type only. A handler bound to an interface or base
+            // type gets that type's subject, which nothing publishes to, because a publish resolves
+            // its subject from the concrete runtime type. Such an endpoint has to name the concrete
+            // subjects with Subject(), since the implementations cannot be discovered here: message
+            // types are completed after topology discovery, so their enclosed types are not yet known.
             var subject = NatsDestinations.ResolveConvention(
                 context.Naming,
                 OutboundRouteKind.Publish,

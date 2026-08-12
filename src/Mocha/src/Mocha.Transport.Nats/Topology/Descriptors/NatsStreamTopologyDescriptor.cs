@@ -12,7 +12,16 @@ public sealed class NatsStreamTopologyDescriptor
     private NatsStreamTopologyDescriptor(IMessagingConfigurationContext context, string name)
         : base(context)
     {
-        Configuration = new NatsStreamConfiguration { Name = name, Subjects = [] };
+        Configuration = new NatsStreamConfiguration
+        {
+            Name = name,
+            Subjects = [],
+
+            // Declared, not convention. The transport treats a convention stream as shared and
+            // yields it when something else already owns its subjects, which must never happen
+            // silently to a stream the caller asked for by name.
+            Origin = TopologyOrigin.Declared
+        };
     }
 
     /// <inheritdoc />

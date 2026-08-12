@@ -101,6 +101,42 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
         Address = NatsAddress.ForStream(Topology.Address, Name);
     }
 
+    /// <summary>
+    /// Folds a second declaration of this stream into the existing one.
+    /// </summary>
+    /// <param name="configuration">The configuration to fold in.</param>
+    /// <remarks>
+    /// The convention stream takes its name from the service name, so it collides with a stream the
+    /// caller declared under that same name. Dropping the second declaration would leave the subjects
+    /// it carried uncaptured, which surfaces much later as a publish that times out. Subjects are
+    /// therefore combined and everything already set is kept, so an explicit declaration still wins
+    /// on retention, storage and limits.
+    /// </remarks>
+    internal void Merge(NatsStreamConfiguration configuration)
+    {
+        if (configuration.Subjects is { Count: > 0 } incoming)
+        {
+            Subjects = [.. Merge(Subjects.ToList(), [.. incoming])];
+            _config.Subjects = [.. Subjects];
+        }
+
+        AutoProvision ??= configuration.AutoProvision;
+
+        // Only ever turned on: a stream that has to hold scheduled or expiring messages for one
+        // caller must keep doing so for the other.
+        if (configuration.AllowMsgTtl == true)
+        {
+            AllowMsgTtl = true;
+            _config.AllowMsgTTL = true;
+        }
+
+        if (configuration.AllowMsgSchedules == true)
+        {
+            AllowMsgSchedules = true;
+            _config.AllowMsgSchedules = true;
+        }
+    }
+
     /// <inheritdoc />
     public async ValueTask ProvisionAsync(INatsJSContext context, CancellationToken cancellationToken)
     {
@@ -142,15 +178,7 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
         }
 
         var adopted = existing.Info.Config;
-        var subjects = (adopted.Subjects ?? []).ToList();
-
-        foreach (var subject in Subjects)
-        {
-            if (!subjects.Contains(subject, StringComparer.Ordinal))
-            {
-                subjects.Add(subject);
-            }
-        }
+        var subjects = Merge((adopted.Subjects ?? []).ToList(), Subjects);
 
         adopted.Subjects = [.. subjects];
 
@@ -164,5 +192,36 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
         DuplicateWindow = adopted.DuplicateWindow;
         AllowMsgTtl = adopted.AllowMsgTTL;
         AllowMsgSchedules = adopted.AllowMsgSchedules;
+    }
+
+    /// <summary>
+    /// Combines two subject lists, keeping only the subjects that are not already covered by another
+    /// subject in the result.
+    /// </summary>
+    /// <param name="current">The subjects the stream already captures.</param>
+    /// <param name="additional">The subjects to add.</param>
+    /// <returns>The combined subjects.</returns>
+    /// <remarks>
+    /// A plain union can produce a set where one subject matches another, for example <c>a.b</c>
+    /// alongside <c>a.&gt;</c>, which the server rejects as an overlap within the stream. Keeping the
+    /// broader subject loses nothing, because it already captures everything the narrower one did.
+    /// </remarks>
+    private static List<string> Merge(List<string> current, ImmutableArray<string> additional)
+    {
+        var subjects = new List<string>(current);
+
+        foreach (var subject in additional)
+        {
+            if (subjects.Any(existing => SubjectMatcher.Matches(existing, subject)))
+            {
+                continue;
+            }
+
+            // The new subject is broader, so anything it covers is now redundant.
+            subjects.RemoveAll(existing => SubjectMatcher.Matches(subject, existing));
+            subjects.Add(subject);
+        }
+
+        return subjects;
     }
 }

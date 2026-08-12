@@ -44,7 +44,8 @@ public sealed class NatsMessagingTopology(
     public IReadOnlyList<NatsSubject> Subjects => _subjects;
 
     /// <summary>
-    /// Adds a stream to the topology, or returns the existing stream with the same name.
+    /// Adds a stream to the topology, folding the configuration into the existing stream when one
+    /// with the same name is already present.
     /// </summary>
     /// <param name="configuration">The stream configuration.</param>
     /// <returns>The new or existing stream.</returns>
@@ -58,6 +59,8 @@ public sealed class NatsMessagingTopology(
 
             if (existing is not null)
             {
+                existing.Merge(configuration);
+
                 return existing;
             }
 
