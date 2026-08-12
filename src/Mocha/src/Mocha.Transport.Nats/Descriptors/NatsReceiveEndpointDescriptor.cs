@@ -1,3 +1,4 @@
+using Mocha.Features;
 using Mocha.Middlewares;
 
 namespace Mocha.Transport.Nats;
@@ -104,5 +105,69 @@ internal sealed class NatsReceiveEndpointDescriptor
         }
 
         return this;
+    }
+
+    public INatsReceiveEndpointDescriptor FaultEndpoint(Uri address)
+    {
+        var feature = Configuration.Features.GetOrSet<ReceiveFaultEndpointFeature>();
+
+        feature.Address = Validate(address);
+        feature.IsDisabled = false;
+
+        return this;
+    }
+
+    public INatsReceiveEndpointDescriptor DisableFaultEndpoint()
+    {
+        var feature = Configuration.Features.GetOrSet<ReceiveFaultEndpointFeature>();
+
+        feature.IsDisabled = true;
+        feature.Address = null;
+
+        return this;
+    }
+
+    public INatsReceiveEndpointDescriptor SkippedEndpoint(Uri address)
+    {
+        var feature = Configuration.Features.GetOrSet<ReceiveSkippedEndpointFeature>();
+
+        feature.Address = Validate(address);
+        feature.IsDisabled = false;
+
+        return this;
+    }
+
+    public INatsReceiveEndpointDescriptor DisableSkippedEndpoint()
+    {
+        var feature = Configuration.Features.GetOrSet<ReceiveSkippedEndpointFeature>();
+
+        feature.IsDisabled = true;
+        feature.Address = null;
+
+        return this;
+    }
+
+    private static Uri Validate(Uri address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+
+        if (!address.IsAbsoluteUri)
+        {
+            throw new ArgumentException(
+                "The endpoint address must be an absolute URI.",
+                nameof(address));
+        }
+
+        // Rejected here rather than at start-up: an address the transport cannot turn into a subject
+        // would otherwise be dropped silently and faulted messages would go nowhere.
+        if (!NatsDestinations.TryResolveExplicit(NatsTransportConfiguration.DefaultSchema, address, out _))
+        {
+            throw new ArgumentException(
+                $"'{address}' does not resolve to a NATS subject. Use 'nats:s/<subject>' or "
+                + "'subject:<subject>'.",
+                nameof(address));
+        }
+
+        return address;
     }
 }

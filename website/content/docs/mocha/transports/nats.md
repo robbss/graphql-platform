@@ -247,14 +247,32 @@ An endpoint is the receive side: a durable consumer and the subjects it filters.
     .MaxConcurrency(10))
 ```
 
-| Method                       | Effect                                                               |
-| ---------------------------- | -------------------------------------------------------------------- |
-| `Handler<T>` / `Consumer<T>` | Places a handler on this endpoint                                    |
-| `Receives<T>`                | Binds a message type without naming a handler                        |
-| `Subject`                    | Adds a subject filter beyond those derived from handlers             |
-| `ConsumerName`               | Sets the durable name, which defaults to the sanitised endpoint name |
-| `FromStream`                 | Reads from a named stream instead of resolving one at start-up       |
-| `MaxConcurrency`             | Bounds parallel handling and the local buffer                        |
+| Method                                            | Effect                                                               |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| `Handler<T>` / `Consumer<T>`                      | Places a handler on this endpoint                                    |
+| `Receives<T>`                                     | Binds a message type without naming a handler                        |
+| `Subject`                                         | Adds a subject filter beyond those derived from handlers             |
+| `ConsumerName`                                    | Sets the durable name, which defaults to the sanitised endpoint name |
+| `FromStream`                                      | Reads from a named stream instead of resolving one at start-up       |
+| `MaxConcurrency`                                  | Bounds parallel handling and the local buffer                        |
+| `FaultEndpoint` / `SkippedEndpoint`               | Replaces the derived address failed or skipped messages go to        |
+| `DisableFaultEndpoint` / `DisableSkippedEndpoint` | Stops forwarding them at all                                         |
+
+## Scoping an endpoint the framework names
+
+Endpoint names are host-scoped only for routes a handler subscribes to. A route the framework registers for one of its own message types, such as the saga timeout, is named after that message type with no service prefix. Every service hosting a saga therefore derives the same `saga-timed-out` endpoint, which means the same durable name and the same fault subjects.
+
+Declaring the endpoint under the name the framework derives configures that endpoint rather than adding a second one, so both can be scoped:
+
+```csharp
+nats.Endpoint("saga-timed-out")
+    .ConsumerName($"{serviceName}_saga-timed-out")
+    .FaultEndpoint(new Uri($"nats:s/{serviceName}.saga-timed-out_error"))
+    .SkippedEndpoint(new Uri($"nats:s/{serviceName}.saga-timed-out_skipped"));
+```
+
+> [!WARNING]
+> Scoping the durable gives each service its own consumer on the shared timeout subject, so each receives every service's timeouts and ignores those whose saga it does not hold. Leaving the durable shared instead means each timeout reaches only one service, chosen arbitrarily. Neither is a substitute for the endpoint being scoped where it is named.
 
 # Declare topology resources
 

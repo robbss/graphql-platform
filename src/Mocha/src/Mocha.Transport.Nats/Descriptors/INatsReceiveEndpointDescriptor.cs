@@ -50,6 +50,34 @@ public interface INatsReceiveEndpointDescriptor
     /// <returns>The descriptor for method chaining.</returns>
     INatsReceiveEndpointDescriptor Subject(string subject);
 
+    /// <summary>
+    /// Sets the address failed messages are forwarded to, replacing the one derived from the
+    /// endpoint name.
+    /// </summary>
+    /// <param name="address">The fault endpoint address, for example <c>nats:s/orders_error</c>.</param>
+    /// <returns>The descriptor for method chaining.</returns>
+    INatsReceiveEndpointDescriptor FaultEndpoint(Uri address);
+
+    /// <summary>
+    /// Stops failed messages being forwarded to a fault endpoint.
+    /// </summary>
+    /// <returns>The descriptor for method chaining.</returns>
+    INatsReceiveEndpointDescriptor DisableFaultEndpoint();
+
+    /// <summary>
+    /// Sets the address skipped messages are forwarded to, replacing the one derived from the
+    /// endpoint name.
+    /// </summary>
+    /// <param name="address">The skipped endpoint address.</param>
+    /// <returns>The descriptor for method chaining.</returns>
+    INatsReceiveEndpointDescriptor SkippedEndpoint(Uri address);
+
+    /// <summary>
+    /// Stops skipped messages being forwarded to a skipped endpoint.
+    /// </summary>
+    /// <returns>The descriptor for method chaining.</returns>
+    INatsReceiveEndpointDescriptor DisableSkippedEndpoint();
+
     /// <inheritdoc cref="IReceiveEndpointDescriptor{T}.UseReceive" />
     new INatsReceiveEndpointDescriptor UseReceive(
         ReceiveMiddlewareConfiguration configuration,
