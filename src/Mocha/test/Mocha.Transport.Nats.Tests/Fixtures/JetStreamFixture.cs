@@ -8,7 +8,7 @@ namespace Mocha.Transport.Nats.Tests.Fixtures;
 /// <summary>
 /// Shared JetStream-enabled NATS container for the integration tests.
 /// </summary>
-public sealed class JetStreamFixture : IAsyncLifetime
+public sealed partial class JetStreamFixture : IAsyncLifetime
 {
     private readonly NatsResource<JetStreamOptions> _resource = new();
 
