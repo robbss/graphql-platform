@@ -58,9 +58,10 @@ public class DeadLetterTests(JetStreamFixture fixture)
             Assert.True(await recorder.WaitAsync(TimeSpan.FromSeconds(30)), "The handler never ran.");
 
             // assert
-            // The dead-lettered copy carries the same message identifier as the original. Since
-            // deduplication is stream-scoped, an unqualified identifier would make the republish look
-            // like a duplicate and it would never arrive.
+            // The dead-lettered copy carries the same message identifier as the original, so under
+            // EnablePublishDeduplication its identifier has to stay qualified by subject: an
+            // unqualified one would make the republish look like a duplicate and it would never
+            // arrive, and the publish would still report success.
             var delivered = await WaitForSubjectAsync(
                 fixture.JetStream,
                 stream.Name,
