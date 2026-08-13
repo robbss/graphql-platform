@@ -315,9 +315,25 @@ Buffering matters here. A pulled message counts as delivered the moment it reach
 
 # Deduplication
 
-Deduplication is scoped to the stream, not to the subject, and it cannot be turned off from the client: a zero `DuplicateWindow` is omitted from the request and the server applies its own default.
+JetStream can deduplicate at the broker, and the transport leaves it off. No other transport deduplicates at the broker, and the failure mode is quiet: a stream discards a repeated identifier and acknowledges the publish as though it had been stored, so a deliberate republish of the same message vanishes with no error, and a `SkipInbox` on the receiving side never gets to see it.
 
-The transport therefore writes a `Nats-Msg-Id` qualified by destination subject and carries the message identifier separately. Without that, republishing a message inside the same stream, which is exactly what dead-lettering does, is discarded as a duplicate and the publish still reports success.
+Deduplicate with the inbox instead. It is transport independent, and it is scoped per consumer rather than per subject, so one subscriber having already processed a message does not suppress it for the others.
+
+To opt into the broker's own deduplication:
+
+```csharp
+.AddNats(nats => nats
+    .ServiceName("order-service")
+    .EnablePublishDeduplication())
+```
+
+That sends a `Nats-Msg-Id` with every publish, qualified by destination subject. The qualification matters: deduplication is scoped to the stream rather than the subject, so without it republishing a message inside the same stream, which is exactly what dead-lettering does, is discarded as a duplicate.
+
+The window comes from the stream, and it cannot be turned off from the client once the header is being sent: a zero `DuplicateWindow` is omitted from the request and the server applies its own default.
+
+```csharp
+nats.DeclareStream("ORDER_SERVICE").DeduplicateWithin(TimeSpan.FromMinutes(2));
+```
 
 # Long-running handlers
 
