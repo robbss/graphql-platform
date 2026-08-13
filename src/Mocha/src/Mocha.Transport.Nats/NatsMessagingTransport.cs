@@ -65,6 +65,7 @@ public sealed class NatsMessagingTransport : MessagingTransport
             ?? NatsTransportConfiguration.DefaultName;
 
         SchedulingEnabled = configuration.EnableScheduling;
+        PublishDeduplicationEnabled = configuration.EnablePublishDeduplication;
 
         WarnOnLossySubscriptionDefaults();
         WarnOnDivergentServiceNames(configuration.ServiceName, context.Host?.ServiceName);
@@ -177,6 +178,11 @@ public sealed class NatsMessagingTransport : MessagingTransport
     /// messages.
     /// </summary>
     public bool SchedulingEnabled { get; private set; }
+
+    /// <summary>
+    /// Gets a value indicating whether a publish carries the header JetStream deduplicates on.
+    /// </summary>
+    public bool PublishDeduplicationEnabled { get; private set; }
 
     /// <summary>
     /// Provisions streams, binds each consumer to the stream capturing its subjects, and then

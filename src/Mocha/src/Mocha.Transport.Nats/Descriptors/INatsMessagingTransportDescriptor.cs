@@ -71,6 +71,19 @@ public interface INatsMessagingTransportDescriptor
     INatsMessagingTransportDescriptor EnableScheduling(bool enable = true);
 
     /// <summary>
+    /// Sends the header JetStream deduplicates on with every publish, off by default.
+    /// </summary>
+    /// <param name="enable">Whether to send the deduplication header.</param>
+    /// <returns>The descriptor for method chaining.</returns>
+    /// <remarks>
+    /// A stream discards a repeated identifier within its deduplication window and acknowledges the
+    /// publish as though it had been stored, so a deliberate republish of the same message is
+    /// suppressed as silently as an accidental one. Message deduplication otherwise belongs to the
+    /// inbox, which is transport independent and scoped per consumer rather than per subject.
+    /// </remarks>
+    INatsMessagingTransportDescriptor EnablePublishDeduplication(bool enable = true);
+
+    /// <summary>
     /// Controls whether streams and consumers are provisioned during start-up.
     /// </summary>
     /// <param name="autoProvision">Whether to provision topology.</param>

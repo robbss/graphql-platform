@@ -139,6 +139,13 @@ public sealed class NatsMessagingTransportDescriptor
     }
 
     /// <inheritdoc />
+    public INatsMessagingTransportDescriptor EnablePublishDeduplication(bool enable = true)
+    {
+        Configuration.EnablePublishDeduplication = enable;
+        return this;
+    }
+
+    /// <inheritdoc />
     public INatsMessagingTransportDescriptor AutoProvision(bool autoProvision = true)
     {
         Configuration.AutoProvision = autoProvision;

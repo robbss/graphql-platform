@@ -152,10 +152,12 @@ public sealed class NatsDispatchEndpoint(NatsMessagingTransport transport)
         NatsHeaders headers,
         CancellationToken cancellationToken)
     {
-        // Qualified by subject because deduplication is stream-scoped: republishing an envelope to
-        // another subject in the same stream, as dead-lettering does, would otherwise be discarded
-        // as a duplicate of the original.
-        if (envelope.MessageId is { Length: > 0 } messageId)
+        // Opt-in because the stream discards a repeated identifier without reporting an error, which
+        // suppresses a deliberate republish as silently as an accidental one, and no other transport
+        // deduplicates at the broker. Qualified by subject because deduplication is stream-scoped:
+        // republishing an envelope to another subject in the same stream, as dead-lettering does,
+        // would otherwise be discarded as a duplicate of the original.
+        if (transport.PublishDeduplicationEnabled && envelope.MessageId is { Length: > 0 } messageId)
         {
             headers[NatsMessageHeaders.DeduplicationKey] = $"{subject}:{messageId}";
         }

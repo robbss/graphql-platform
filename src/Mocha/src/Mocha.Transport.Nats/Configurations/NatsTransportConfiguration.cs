@@ -58,6 +58,16 @@ public sealed class NatsTransportConfiguration : MessagingTransportConfiguration
     public bool EnableScheduling { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a publish carries the header JetStream deduplicates on.
+    /// </summary>
+    /// <remarks>
+    /// Off by default. The stream discards a repeated identifier within its deduplication window
+    /// without reporting an error, which suppresses a deliberate republish of the same message as
+    /// well as an accidental one.
+    /// </remarks>
+    public bool EnablePublishDeduplication { get; set; }
+
+    /// <summary>
     /// Gets or sets the explicitly declared streams for this transport.
     /// </summary>
     public List<NatsStreamConfiguration> Streams { get; set; } = [];
