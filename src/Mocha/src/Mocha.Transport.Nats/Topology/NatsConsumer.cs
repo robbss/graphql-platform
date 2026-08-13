@@ -59,7 +59,7 @@ public sealed class NatsConsumer : TopologyResource<NatsConsumerConfiguration>, 
                 + "'.', '*', '>', whitespace or path separators.");
         }
 
-        FilterSubjects = [.. configuration.FilterSubjects ?? []];
+        FilterSubjects = [.. SubjectMatcher.Collapse(configuration.FilterSubjects ?? [])];
         StreamName = configuration.StreamName;
         MaxAckPending = configuration.MaxAckPending ?? DefaultMaxAckPending;
         AckProgressInterval = configuration.AckProgressInterval;
@@ -115,15 +115,7 @@ public sealed class NatsConsumer : TopologyResource<NatsConsumerConfiguration>, 
     {
         if (configuration.FilterSubjects is { Count: > 0 } incoming)
         {
-            var subjects = FilterSubjects.ToList();
-
-            foreach (var subject in incoming)
-            {
-                if (!subjects.Contains(subject, StringComparer.Ordinal))
-                {
-                    subjects.Add(subject);
-                }
-            }
+            var subjects = SubjectMatcher.Collapse(FilterSubjects.Concat(incoming));
 
             FilterSubjects = [.. subjects];
             _config.FilterSubjects = [.. subjects];

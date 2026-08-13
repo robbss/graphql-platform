@@ -116,7 +116,7 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
     {
         if (configuration.Subjects is { Count: > 0 } incoming)
         {
-            Subjects = [.. Merge(Subjects.ToList(), [.. incoming])];
+            Subjects = [.. SubjectMatcher.Collapse(Subjects.Concat(incoming))];
             _config.Subjects = [.. Subjects];
         }
 
@@ -178,7 +178,7 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
         }
 
         var adopted = existing.Info.Config;
-        var subjects = Merge((adopted.Subjects ?? []).ToList(), Subjects);
+        var subjects = SubjectMatcher.Collapse((adopted.Subjects ?? []).Concat(Subjects));
 
         adopted.Subjects = [.. subjects];
 
@@ -192,36 +192,5 @@ public sealed class NatsStream : TopologyResource<NatsStreamConfiguration>, INat
         DuplicateWindow = adopted.DuplicateWindow;
         AllowMsgTtl = adopted.AllowMsgTTL;
         AllowMsgSchedules = adopted.AllowMsgSchedules;
-    }
-
-    /// <summary>
-    /// Combines two subject lists, keeping only the subjects that are not already covered by another
-    /// subject in the result.
-    /// </summary>
-    /// <param name="current">The subjects the stream already captures.</param>
-    /// <param name="additional">The subjects to add.</param>
-    /// <returns>The combined subjects.</returns>
-    /// <remarks>
-    /// A plain union can produce a set where one subject matches another, for example <c>a.b</c>
-    /// alongside <c>a.&gt;</c>, which the server rejects as an overlap within the stream. Keeping the
-    /// broader subject loses nothing, because it already captures everything the narrower one did.
-    /// </remarks>
-    private static List<string> Merge(List<string> current, ImmutableArray<string> additional)
-    {
-        var subjects = new List<string>(current);
-
-        foreach (var subject in additional)
-        {
-            if (subjects.Any(existing => SubjectMatcher.Matches(existing, subject)))
-            {
-                continue;
-            }
-
-            // The new subject is broader, so anything it covers is now redundant.
-            subjects.RemoveAll(existing => SubjectMatcher.Matches(subject, existing));
-            subjects.Add(subject);
-        }
-
-        return subjects;
     }
 }

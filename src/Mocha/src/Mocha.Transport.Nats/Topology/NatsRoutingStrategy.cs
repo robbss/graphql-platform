@@ -164,6 +164,20 @@ public sealed class NatsRoutingStrategy : RoutingStrategy<NatsMessagingTransport
 
         CollectFilterSubjects(context, endpoint, natsConfiguration);
 
+        // A consumer can only read subjects its stream captures, so what an endpoint filters has to
+        // be captured too. Without this, an endpoint naming a subject no dispatch endpoint happens to
+        // produce, such as a wildcard covering a family of commands, starts cleanly and then fails on
+        // the first publish with nothing accepting the message.
+        foreach (var subject in natsConfiguration.FilterSubjects)
+        {
+            Topology.AddSubject(new NatsSubjectConfiguration
+            {
+                Subject = subject,
+                StreamName = natsConfiguration.StreamName ?? Topology.FindStreamForSubject(subject)?.Name,
+                Origin = TopologyOrigin.Endpoint
+            });
+        }
+
         EnsureFaultSubject(natsConfiguration.Features.Get<ReceiveFaultEndpointFeature>()?.Address);
         EnsureFaultSubject(natsConfiguration.Features.Get<ReceiveSkippedEndpointFeature>()?.Address);
 
@@ -239,9 +253,10 @@ public sealed class NatsRoutingStrategy : RoutingStrategy<NatsMessagingTransport
             //
             // Note this is the route's own message type only. A handler bound to an interface or base
             // type gets that type's subject, which nothing publishes to, because a publish resolves
-            // its subject from the concrete runtime type. Such an endpoint has to name the concrete
-            // subjects with Subject(), since the implementations cannot be discovered here: message
-            // types are completed after topology discovery, so their enclosed types are not yet known.
+            // its subject from the concrete runtime type. Such an endpoint has to filter the concrete
+            // subjects with Subject(), either one wildcard or one call each, since the implementations
+            // cannot be discovered here: message types are completed after topology discovery, so
+            // their enclosed types are not yet known.
             var subject = NatsDestinations.ResolveConvention(
                 context.Naming,
                 OutboundRouteKind.Publish,

@@ -258,7 +258,10 @@ public sealed class NatsMessagingTransport : MessagingTransport
         _topology.AddStream(new NatsStreamConfiguration
         {
             Name = NatsNaming.ToStreamName(_serviceName),
-            Subjects = unclaimed,
+
+            // Collapsed because an endpoint may filter a wildcard that covers subjects derived from
+            // message types, and the server rejects a stream holding both.
+            Subjects = SubjectMatcher.Collapse(unclaimed),
             AllowMsgTtl = SchedulingEnabled,
             AllowMsgSchedules = SchedulingEnabled,
             Origin = TopologyOrigin.Convention
