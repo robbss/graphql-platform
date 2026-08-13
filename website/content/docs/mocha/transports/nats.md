@@ -174,20 +174,26 @@ Resolve it by removing the overlapping subject from the declaration, deleting th
 
 A handler bound to an interface or base type does not receive its implementations by default. A publish resolves its subject from the **concrete runtime type**, so `PublishAsync<IOrderCommand>(command)` and `PublishAsync(command)` behave identically: both go to the concrete type's subject. The generic argument does not select the subject.
 
-To funnel a family onto one endpoint, name the concrete subjects:
+To funnel a family onto one endpoint, filter the subjects it publishes to. When the family shares a namespace, which it does whenever the messages live together, one wildcard covers all of it:
 
 ```csharp
 nats.Endpoint("order-commands")
     .Handler<OrderCommandHandler>()          // IEventHandler<IOrderCommand>
-    .Subject("contracts.orders.cancel-order")
-    .Subject("contracts.orders.hold-order")
+    .Subject("contracts.orders.>")
     // Ordered delivery comes from the single durable; ordered handling needs this.
     .MaxConcurrency(1);
 ```
 
-Every implementation needs its own `Subject` call. They cannot be discovered automatically, because message types are completed after topology is discovered, so their base types are not yet known when subject filters are built.
+A wildcard stays correct as the family grows. Naming each concrete subject works too, and is what to use when the family does not map onto a namespace:
 
-The handler still receives each message typed as the interface: the envelope carries its enclosed types, and the receive pipeline selects the handler from those. Because one durable on one stream delivers in order, this is also the only arrangement that orders a whole family relative to itself, which several consumers cannot do.
+```csharp
+    .Subject("contracts.orders.cancel-order")
+    .Subject("contracts.orders.hold-order")
+```
+
+Implementations cannot be discovered for you, because message types are completed after topology is discovered, so their base types are not yet known when subject filters are built. The interface's own subject is filtered as well, and is dropped when a wildcard already covers it, since JetStream rejects overlapping filter subjects.
+
+Whatever an endpoint filters is also captured by a stream, so no stream declaration is needed for this. The handler receives each message typed as the interface: the envelope carries its enclosed types, and the receive pipeline selects the handler from those. Because one durable on one stream delivers in order, this is also the only arrangement that orders a whole family relative to itself, which several consumers cannot do.
 
 # Which stream does a consumer read from?
 
