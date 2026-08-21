@@ -116,23 +116,28 @@ internal static class NatsStreamResolver
     }
 
     /// <summary>
-    /// Determines whether any stream on the server already captures the specified subject.
+    /// Gets the name of the stream on the server that already captures the specified subject.
     /// </summary>
     /// <param name="jetStream">The JetStream context used to query the server.</param>
     /// <param name="subject">The subject to look for.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns><see langword="true"/> when a stream captures the subject.</returns>
-    public static async ValueTask<bool> IsCapturedAsync(
+    /// <returns>The capturing stream's name, or <see langword="null"/> when no stream captures it.</returns>
+    /// <remarks>
+    /// Which stream holds a subject matters as much as whether one does. A caller deciding what to
+    /// leave out of a stream's own configuration must not leave out a subject that same stream is the
+    /// one already holding, because an update sends the whole configuration and would drop it.
+    /// </remarks>
+    public static async ValueTask<string?> CapturedByAsync(
         INatsJSContext jetStream,
         string subject,
         CancellationToken cancellationToken)
     {
-        await foreach (var _ in jetStream.ListStreamNamesAsync(subject, cancellationToken))
+        await foreach (var name in jetStream.ListStreamNamesAsync(subject, cancellationToken))
         {
-            return true;
+            return name;
         }
 
-        return false;
+        return null;
     }
 
     private static async ValueTask<List<string>> ListStreamsAsync(

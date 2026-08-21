@@ -215,6 +215,7 @@ public sealed class NatsMessagingTransport : MessagingTransport
         }
 
         var unclaimed = new List<string>();
+        var conventionName = NatsNaming.ToStreamName(_streamName);
 
         foreach (var subject in _topology.Subjects)
         {
@@ -231,7 +232,18 @@ public sealed class NatsMessagingTransport : MessagingTransport
                 continue;
             }
 
-            if (await NatsStreamResolver.IsCapturedAsync(JetStream, subject.Subject, cancellationToken))
+            var capturedBy =
+                await NatsStreamResolver.CapturedByAsync(JetStream, subject.Subject, cancellationToken);
+
+            // Claim what nothing holds, and what only the convention stream itself holds. Yielding a
+            // subject to another service's stream is the point of this pass, but yielding one to the
+            // stream about to be written is self-defeating: an update sends the whole configuration,
+            // so a subject left out is dropped from the stream that was holding it. A convention
+            // stream would rebase on the server first and get it back, but once a declaration has
+            // absorbed these subjects it stays authoritative and does not, which left the service
+            // failing to start on the very subject it had just dropped.
+            if (capturedBy is not null
+                && !string.Equals(capturedBy, conventionName, StringComparison.Ordinal))
             {
                 continue;
             }
