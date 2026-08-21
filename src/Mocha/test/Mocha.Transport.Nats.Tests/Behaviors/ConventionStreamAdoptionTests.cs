@@ -63,6 +63,62 @@ public class ConventionStreamAdoptionTests(JetStreamFixture fixture)
         }
     }
 
+    [Fact]
+    public async Task DeclaredStream_Should_SurviveARestart_When_ItAlreadyProvisionedItsOwnSubjects()
+    {
+        // arrange
+        // The first start has nothing to yield to and gets this right, so the defect only shows on the
+        // one after it: the subjects are now on the server, and treating them as somebody else's left
+        // the declaration with none of its own to write. Restarting is the whole reproduction.
+        var cancellationToken = TestContext.Current.CancellationToken;
+        const string serviceName = "restart-service";
+        const string streamName = "RESTART_SERVICE";
+        const string faultSubject = "restart-service.settlement-attempted_error";
+
+        try
+        {
+            // act
+            await StartAndStopAsync(serviceName, streamName, cancellationToken);
+            await StartAndStopAsync(serviceName, streamName, cancellationToken);
+
+            var stream = await fixture.JetStream.GetStreamAsync(
+                streamName,
+                cancellationToken: cancellationToken);
+
+            // assert
+            // Not the stream name as a literal subject, which is what an empty subject list becomes.
+            Assert.Contains(faultSubject, stream.Info.Config.Subjects!);
+            Assert.DoesNotContain(streamName, stream.Info.Config.Subjects!);
+        }
+        finally
+        {
+            await fixture.JetStream.DeleteStreamAsync(streamName, cancellationToken);
+        }
+    }
+
+    private async Task StartAndStopAsync(
+        string serviceName,
+        string streamName,
+        CancellationToken cancellationToken)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton(fixture.Connection);
+        builder.Services
+            .AddMessageBus()
+            .AddEventHandler<SettlementAttemptedHandler>()
+            .Host(host => host.ServiceName(serviceName))
+            .AddNats(nats =>
+            {
+                nats.StreamName(serviceName);
+                nats.DeclareStream(streamName).MaxAge(TimeSpan.FromHours(168));
+            });
+
+        using var host = builder.Build();
+
+        await host.StartAsync(cancellationToken);
+        await host.StopAsync(cancellationToken);
+    }
+
     public sealed record SettlementAttempted
     {
         public string? Reference { get; init; }
